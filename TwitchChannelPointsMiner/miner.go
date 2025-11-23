@@ -298,7 +298,15 @@ func (m *Miner) minuteWatcher(streamers []*entities.Streamer, stop <-chan struct
 
 			if err := m.twitch.SendMinuteWatched(streamer); err != nil {
 				if errors.Is(err, classpkg.ErrStreamerOffline) {
-					m.setPresence(streamer, false, "minute-watch")
+					live, liveErr := m.twitch.IsStreamLive(streamer.ChannelID)
+					if liveErr != nil {
+						m.logger.Printf("live check %s: %v", streamer.Username, liveErr)
+					}
+					if !live {
+						m.setPresence(streamer, false, "minute-watch")
+					} else {
+						m.logger.Printf("minute watch %s: transient offline response, keeping online", streamer.Username)
+					}
 				}
 				m.logger.Printf("minute watch %s: %v", streamer.Username, err)
 			}

@@ -251,6 +251,24 @@ func (t *Twitch) CheckStreamerOnline(streamer *entities.Streamer) (bool, error) 
 	return true, nil
 }
 
+// ? IsStreamLive performs a lightweight live check without refreshing stream metadata.
+func (t *Twitch) IsStreamLive(channelID string) (bool, error) {
+	if channelID == "" {
+		return false, fmt.Errorf("missing channel id")
+	}
+	op := constants.GQLOperations.WithIsStreamLiveQuery
+	if op.Variables == nil {
+		op.Variables = map[string]interface{}{}
+	}
+	op.Variables["id"] = channelID
+	resp, err := t.PostGQL(op)
+	if err != nil || resp == nil {
+		return false, err
+	}
+	stream := navigate(resp, "data.user.stream")
+	return stream != nil, nil
+}
+
 func (t *Twitch) streamInfo(username string) (map[string]interface{}, error) {
 	op := constants.GQLOperations.VideoPlayerStreamInfoOverlay
 	if op.Variables == nil {
