@@ -2,6 +2,7 @@ package twitchchannelpointsminer
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -296,6 +297,9 @@ func (m *Miner) minuteWatcher(streamers []*entities.Streamer, stop <-chan struct
 			}
 
 			if err := m.twitch.SendMinuteWatched(streamer); err != nil {
+				if errors.Is(err, classpkg.ErrStreamerOffline) {
+					m.setPresence(streamer, false, "minute-watch")
+				}
 				m.logger.Printf("minute watch %s: %v", streamer.Username, err)
 			}
 
