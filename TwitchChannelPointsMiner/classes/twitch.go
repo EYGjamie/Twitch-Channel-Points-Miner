@@ -77,6 +77,13 @@ func (t *Twitch) Login(username string) error {
 	return nil
 }
 
+func (t *Twitch) ChatToken() string {
+	if t == nil || t.twitchLogin == nil {
+		return ""
+	}
+	return t.twitchLogin.AuthToken()
+}
+
 func (t *Twitch) debugf(format string, args ...interface{}) {
 	if t.logger != nil && t.logger.DebugEnabled() {
 		t.logger.Debugf(format, args...)

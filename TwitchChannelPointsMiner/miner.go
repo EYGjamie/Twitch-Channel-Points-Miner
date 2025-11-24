@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -95,6 +96,8 @@ type Miner struct {
 	initialPoints              map[string]int
 	stop                       chan struct{}
 	watchPriorities            []watchPriority
+	chatWatchers               map[string]*classpkg.ChatClient
+	chatMu                     sync.Mutex
 }
 
 func NewMiner(username, password string, claimDropsStartup bool, disableCertCheck bool, loggerSettings LoggerSettings, streamerSettings entities.StreamerSettings, priorityNames []string) *Miner {
@@ -108,6 +111,7 @@ func NewMiner(username, password string, claimDropsStartup bool, disableCertChec
 		StreamerSettings:           streamerSettings,
 		logger:                     NewLogger(loggerSettings, username),
 		watchPriorities:            parseWatchPriorities(priorityNames),
+		chatWatchers:               make(map[string]*classpkg.ChatClient),
 	}
 }
 
@@ -520,6 +524,7 @@ func (m *Miner) shutdown(sessionID string) {
 			}
 		}
 	}
+	m.stopAllChatWatchers()
 	os.Exit(0)
 }
 
@@ -722,6 +727,7 @@ func (m *Miner) setPresence(streamer *entities.Streamer, online bool, reason str
 		}
 	}
 	streamer.IsOnline = online
+	m.updateChatPresence(streamer, online)
 	if !prevKnown {
 		if online {
 			m.logOnline(streamer)
@@ -741,6 +747,68 @@ func (m *Miner) setPresence(streamer *entities.Streamer, online bool, reason str
 	if reason != "" && !online {
 		// ? Offline message already logged for state changes; keep silent on no-op toggles.
 		return
+	}
+}
+
+func (m *Miner) updateChatPresence(streamer *entities.Streamer, online bool) {
+	if streamer == nil {
+		return
+	}
+	if online {
+		m.startChatWatcher(streamer)
+	} else {
+		m.stopChatWatcher(streamer)
+	}
+}
+
+func (m *Miner) startChatWatcher(streamer *entities.Streamer) {
+	if streamer == nil || m.twitch == nil {
+		return
+	}
+	token := m.twitch.ChatToken()
+	if token == "" {
+		return
+	}
+	key := strings.ToLower(streamer.Username)
+	m.chatMu.Lock()
+	if _, exists := m.chatWatchers[key]; exists {
+		m.chatMu.Unlock()
+		return
+	}
+	watcher := classpkg.NewChatClient(m.Username, token, streamer.Username, m.logger, false)
+	m.chatWatchers[key] = watcher
+	m.chatMu.Unlock()
+	watcher.Start()
+}
+
+func (m *Miner) stopChatWatcher(streamer *entities.Streamer) {
+	if streamer == nil {
+		return
+	}
+	key := strings.ToLower(streamer.Username)
+	m.chatMu.Lock()
+	watcher, ok := m.chatWatchers[key]
+	if ok {
+		delete(m.chatWatchers, key)
+	}
+	m.chatMu.Unlock()
+	if ok && watcher != nil {
+		watcher.Stop()
+	}
+}
+
+func (m *Miner) stopAllChatWatchers() {
+	m.chatMu.Lock()
+	watchers := make([]*classpkg.ChatClient, 0, len(m.chatWatchers))
+	for key, watcher := range m.chatWatchers {
+		if watcher != nil {
+			watchers = append(watchers, watcher)
+		}
+		delete(m.chatWatchers, key)
+	}
+	m.chatMu.Unlock()
+	for _, watcher := range watchers {
+		watcher.Stop()
 	}
 }
 
