@@ -151,6 +151,7 @@ func (m *Miner) run(streamers []string, useFollowers bool, order entities.Follow
 	}
 
 	streamerObjs := make([]*entities.Streamer, 0, len(targets))
+	loadStartedAt := time.Now()
 	m.logger.EmojiPrintf(":hourglass_flowing_sand:", "Loading data for %d streamer(s). Please wait...", len(targets))
 	for _, name := range targets {
 		if name == "" {
@@ -180,7 +181,7 @@ func (m *Miner) run(streamers []string, useFollowers bool, order entities.Follow
 	}
 
 	if len(streamerObjs) > 0 {
-		m.logger.EmojiPrintf(":white_check_mark:", "%d Streamer loaded!", len(streamerObjs))
+		m.logger.EmojiPrintf(":white_check_mark:", "%d Streamer loaded! (%s)", len(streamerObjs), formatLoadDuration(time.Since(loadStartedAt)))
 	}
 
 	if m.ClaimDropsStartup {
@@ -486,6 +487,18 @@ func (m *Miner) shutdown(sessionID string) {
 	m.logger.EmojiPrintf(":stop_sign:", "Ending session: '%s'", sessionID)
 	duration := formatDuration(time.Since(m.startedAt))
 	m.logger.EmojiPrintf(":hourglass:", "Duration %s", duration)
+	totalPointsChange := 0
+	for _, s := range m.streamers {
+		totalPointsChange += s.ChannelPoints - m.initialPoints[s.Username]
+	}
+	totalSign := "+"
+	totalColor := colorGreen
+	if totalPointsChange < 0 {
+		totalPointsChange = -totalPointsChange
+		totalSign = "-"
+		totalColor = colorRed
+	}
+	m.logger.EmojiPrintf(":chart_with_upwards_trend:", "Total Points gained: %s%s%d%s", totalColor, totalSign, totalPointsChange, colorReset)
 	for _, s := range m.streamers {
 		initial := m.initialPoints[s.Username]
 		total := s.ChannelPoints - initial
@@ -729,6 +742,13 @@ func (m *Miner) setPresence(streamer *entities.Streamer, online bool, reason str
 		// ? Offline message already logged for state changes; keep silent on no-op toggles.
 		return
 	}
+}
+
+func formatLoadDuration(d time.Duration) string {
+	if d >= time.Minute {
+		return fmt.Sprintf("%.1f minutes", d.Minutes())
+	}
+	return fmt.Sprintf("%.1f seconds", d.Seconds())
 }
 
 // ? newSessionID creates a UUID-like string for session logging.
