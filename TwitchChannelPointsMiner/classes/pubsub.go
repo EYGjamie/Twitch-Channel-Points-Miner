@@ -295,8 +295,27 @@ func (p *PubSubClient) processPlaybackMessage(topic string, payload map[string]i
 	}
 	msgType := strings.ToLower(fmt.Sprint(payload["type"]))
 	switch msgType {
-	case "stream-up", "viewcount":
+	case "stream-up":
+		if streamer.Stream == nil {
+			streamer.Stream = entities.NewStream()
+		}
+		streamer.Stream.StreamUpAt = time.Now()
 		p.onPresence(streamer, true, msgType)
+	case "viewcount":
+		if streamer.Stream != nil && !streamer.Stream.StreamUpElapsed() {
+			return nil
+		}
+		if !streamer.OfflineAt.IsZero() && time.Since(streamer.OfflineAt) < time.Minute {
+			return nil
+		}
+		live, err := p.twitch.IsStreamLive(streamer.ChannelID)
+		if err != nil {
+			p.logger.Errorf("live check %s: %v", streamer.Username, err)
+			return nil
+		}
+		if live {
+			p.onPresence(streamer, true, msgType)
+		}
 	case "stream-down":
 		p.onPresence(streamer, false, msgType)
 	}

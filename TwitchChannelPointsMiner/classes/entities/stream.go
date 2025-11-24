@@ -22,6 +22,7 @@ type Stream struct {
 
 	WatchStreakMissing bool
 	MinuteWatched      float64
+	StreamUpAt         time.Time
 	lastUpdate         time.Time
 	lastMinuteUpdate   time.Time
 }
@@ -68,6 +69,13 @@ func (s *Stream) LastUpdateAgo() time.Duration {
 		return 0
 	}
 	return time.Since(s.lastUpdate)
+}
+
+func (s *Stream) StreamUpElapsed() bool {
+	if s == nil || s.StreamUpAt.IsZero() {
+		return true
+	}
+	return time.Since(s.StreamUpAt) > 2*time.Minute
 }
 
 func (s *Stream) EncodePayload() (map[string]string, error) {
