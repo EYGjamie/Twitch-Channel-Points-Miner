@@ -133,6 +133,7 @@ var emojiMap = map[string]string{
 	":performing_arts:":          "🎭",
 	":cry:":                      "😢",
 	":disappointed_relieved:":    "😥",
+	":video_game:":               "🎮",
 }
 
 func emojize(code string) string {

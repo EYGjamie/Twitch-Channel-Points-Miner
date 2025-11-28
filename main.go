@@ -26,25 +26,29 @@ type betConfig struct {
 }
 
 type config struct {
-	Username                   string    `json:"username"`
-	Password                   string    `json:"password"`
-	AutoUpdate                 bool      `json:"auto_update"`
-	Debug                      bool      `json:"debug"`
-	SmartLogging               bool      `json:"smart_logging"`
-	DisableSSLCertVerification bool      `json:"disable_ssl_cert_verification"`
-	ShowSeconds                bool      `json:"show_seconds"`
-	ClaimDropsStartup          bool      `json:"claim_drops_startup"`
-	ClaimDrops                 bool      `json:"claim_drops"`
-	BettingMakePredictions     bool      `json:"betting(make_predictions)"`
-	FollowRaid                 bool      `json:"follow_raid"`
-	CommunityGoals             bool      `json:"community_goals"`
-	Emojis                     bool      `json:"emojis"`
-	SaveLogs                   bool      `json:"save_logs"`
-	ShowUsernameInConsole      bool      `json:"show_username_in_console"`
-	ShowClaimedBonusMsg        bool      `json:"show_claimed_bonus_msg"`
-	Streamers                  []string  `json:"streamers"`
-	WatchPriority              []string  `json:"watch_priority"`
-	Bet                        betConfig `json:"bet"`
+	Username                   string `json:"username"`
+	Password                   string `json:"password"`
+	AutoUpdate                 bool   `json:"auto_update"`
+	Debug                      bool   `json:"debug"`
+	SmartLogging               bool   `json:"smart_logging"`
+	DisableSSLCertVerification bool   `json:"disable_ssl_cert_verification"`
+	ShowSeconds                bool   `json:"show_seconds"`
+	ClaimDropsStartup          bool   `json:"claim_drops_startup"`
+	ClaimDrops                 bool   `json:"claim_drops"`
+	BettingMakePredictions     bool   `json:"betting(make_predictions)"`
+	FollowRaid                 bool   `json:"follow_raid"`
+	CommunityGoals             bool   `json:"community_goals"`
+	Emojis                     bool   `json:"emojis"`
+	SaveLogs                   bool   `json:"save_logs"`
+	ShowUsernameInConsole      bool   `json:"show_username_in_console"`
+	ShowClaimedBonusMsg        bool   `json:"show_claimed_bonus_msg"`
+	ShowGame                   bool   `json:"show_game"`
+	// ShowDropsIndicator         bool      `json:"show_drops_indicator"`
+	Streamers     []string  `json:"streamers"`
+	GamePriority  []string  `json:"game_priority"`
+	GameExclude   []string  `json:"game_exclude"`
+	WatchPriority []string  `json:"watch_priority"`
+	Bet           betConfig `json:"bet"`
 }
 
 func clearConsole() {
@@ -87,7 +91,11 @@ func defaultConfig() map[string]interface{} {
 		"save_logs":                     false,
 		"show_username_in_console":      false,
 		"show_claimed_bonus_msg":        true,
-		"streamers":                     []interface{}{},
+		"show_game":                     true,
+		// "show_drops_indicator":          true,
+		"streamers":     []interface{}{},
+		"game_priority": []interface{}{},
+		"game_exclude":  []interface{}{},
 		"watch_priority": []interface{}{
 			"STREAK",
 			"DROPS",
@@ -220,6 +228,10 @@ func main() {
 		loggerSettings,
 		streamerSettings,
 		cfg.WatchPriority,
+		cfg.GamePriority,
+		cfg.GameExclude,
+		cfg.ShowGame,
+		// cfg.ShowDropsIndicator,
 	)
 
 	if len(cfg.Streamers) > 0 {

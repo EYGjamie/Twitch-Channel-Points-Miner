@@ -9,16 +9,18 @@ import (
 )
 
 type Stream struct {
-	BroadcastID  string
-	Title        string
-	Game         map[string]interface{}
-	Tags         []map[string]interface{}
-	DropsTags    bool
-	Campaigns    []interface{}
-	CampaignIDs  []string
-	ViewersCount int
-	SpadeURL     string
-	Payload      []map[string]interface{}
+	BroadcastID       string
+	Title             string
+	Game              map[string]interface{}
+	Tags              []map[string]interface{}
+	DropsTags         bool
+	Campaigns         []interface{}
+	CampaignIDs       []string
+	CampaignsResolved bool
+	DropsActive       bool
+	ViewersCount      int
+	SpadeURL          string
+	Payload           []map[string]interface{}
 
 	WatchStreakMissing bool
 	MinuteWatched      float64
@@ -89,15 +91,18 @@ func (s *Stream) EncodePayload() (map[string]string, error) {
 }
 
 func (s *Stream) String() string {
-	return fmt.Sprintf("%s (%s)", s.Title, s.gameName())
+	return fmt.Sprintf("%s (%s)", s.Title, s.GameName())
 }
 
-func (s *Stream) gameName() string {
-	if s.Game == nil {
+func (s *Stream) GameName() string {
+	if s == nil || s.Game == nil {
 		return ""
 	}
 	if v, ok := s.Game["displayName"].(string); ok {
-		return v
+		return strings.TrimSpace(v)
+	}
+	if v, ok := s.Game["name"].(string); ok {
+		return strings.TrimSpace(v)
 	}
 	return ""
 }

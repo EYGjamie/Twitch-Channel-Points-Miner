@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	colorGreen = constants.ColorGreen
-	colorRed   = constants.ColorRed
-	colorCyan  = constants.ColorCyan
-	colorReset = constants.ColorReset
+	colorGreen       = constants.ColorGreen
+	colorRed         = constants.ColorRed
+	colorCyan        = constants.ColorCyan
+	colorGameLabel   = constants.ColorPurple
+	colorDropsAccent = constants.ColorYellow
+	colorReset       = constants.ColorReset
 )
 
 type watchPriority int
@@ -82,6 +84,42 @@ func parseWatchPriorities(priorityNames []string) []watchPriority {
 	return parsed
 }
 
+func watchPriorityName(p watchPriority) string {
+	switch p {
+	case watchPriorityOrder:
+		return "ORDER"
+	case watchPriorityStreak:
+		return "STREAK"
+	case watchPriorityDrops:
+		return "DROPS"
+	case watchPrioritySubscribed:
+		return "SUBSCRIBED"
+	case watchPriorityPointsAscending:
+		return "POINTS_ASC"
+	case watchPriorityPointsDescending:
+		return "POINTS_DESC"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func normalizeGameList(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{})
+	for _, raw := range values {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		normalized = append(normalized, name)
+	}
+	return normalized
+}
+
 type Miner struct {
 	Username                   string
 	Password                   string
@@ -96,12 +134,27 @@ type Miner struct {
 	initialPoints              map[string]int
 	stop                       chan struct{}
 	watchPriorities            []watchPriority
+	gamePriority               []string
+	gamePriorityIndex          map[string]int
+	gameExclusions             map[string]struct{}
 	chatWatchers               map[string]*classpkg.ChatClient
 	chatMu                     sync.Mutex
+	showGameInfo               bool
+	// showDropsIndicator         bool
+	rawWatchPriorities []string
 }
 
-func NewMiner(username, password string, claimDropsStartup bool, disableCertCheck bool, loggerSettings LoggerSettings, streamerSettings entities.StreamerSettings, priorityNames []string) *Miner {
+func NewMiner(username, password string, claimDropsStartup bool, disableCertCheck bool, loggerSettings LoggerSettings, streamerSettings entities.StreamerSettings, priorityNames []string, gamePriority []string, gameExclude []string, showGameInfo bool) *Miner {
 	streamerSettings.Default()
+	priorityList := normalizeGameList(gamePriority)
+	excludedGames := make(map[string]struct{})
+	for _, name := range normalizeGameList(gameExclude) {
+		excludedGames[name] = struct{}{}
+	}
+	priorityIndex := make(map[string]int, len(priorityList))
+	for idx, name := range priorityList {
+		priorityIndex[name] = idx
+	}
 	return &Miner{
 		Username:                   username,
 		Password:                   password,
@@ -111,7 +164,13 @@ func NewMiner(username, password string, claimDropsStartup bool, disableCertChec
 		StreamerSettings:           streamerSettings,
 		logger:                     NewLogger(loggerSettings, username),
 		watchPriorities:            parseWatchPriorities(priorityNames),
+		gamePriority:               priorityList,
+		gamePriorityIndex:          priorityIndex,
+		gameExclusions:             excludedGames,
 		chatWatchers:               make(map[string]*classpkg.ChatClient),
+		showGameInfo:               showGameInfo,
+		// showDropsIndicator:         showDropsIndicator,
+		rawWatchPriorities: priorityNames,
 	}
 }
 
@@ -125,10 +184,23 @@ func (m *Miner) MineFollowers(order entities.FollowersOrder) {
 	m.run(nil, true, order)
 }
 
+func (m *Miner) logWatchPriorities() {
+	applied := make([]string, 0, len(m.watchPriorities))
+	for _, p := range m.watchPriorities {
+		applied = append(applied, watchPriorityName(p))
+	}
+	raw := m.rawWatchPriorities
+	if len(raw) == 0 {
+		raw = []string{"<default>"}
+	}
+	// m.logger.Printf("Watch priority (config): %v | Applied order: %s", raw, strings.Join(applied, ", "))
+}
+
 func (m *Miner) run(streamers []string, useFollowers bool, order entities.FollowersOrder) {
 	m.startedAt = time.Now()
 	m.logger.Printf("Twitch Channel Points Miner | v%s", constants.Version)
 	m.logger.Println("https://github.com/0x8fv/Twitch-Channel-Points-Miner")
+	m.logWatchPriorities()
 	sessionID := newSessionID()
 	m.logger.EmojiPrintf(":green_circle:", "Start session: '%s'", sessionID)
 	m.stop = make(chan struct{})
@@ -138,10 +210,13 @@ func (m *Miner) run(streamers []string, useFollowers bool, order entities.Follow
 	if err != nil {
 		m.logger.Fatalf("failed to create twitch client: %v", err)
 	}
+	tw.SetGameChangeHandler(m.handleGameChange)
 	m.twitch = tw
 	if err := m.twitch.Login(m.Username); err != nil {
 		m.logger.Fatalf("login failed: %v", err)
 	}
+	// TODO: Fix Available Campaigns
+	// m.logAvailableCampaigns()
 
 	var targets []string
 	if useFollowers {
@@ -255,11 +330,8 @@ func (m *Miner) contextRefresher(streamers []*entities.Streamer, stop <-chan str
 					m.logger.Printf("refresh %s: %v", s.Username, err)
 				} else {
 					m.handlePointsUpdate(s, prev, "")
-					if s.Settings.ClaimDrops && s.Stream != nil {
-						if campaigns, err := m.twitch.CampaignIDsForStreamer(s); err == nil {
-							s.Stream.CampaignIDs = campaigns
-						}
-					}
+					// TODO: Fix Available Campaigns
+					// m.refreshCampaigns(s)
 				}
 			}
 		case <-stop:
@@ -323,9 +395,166 @@ func (m *Miner) minuteWatcher(streamers []*entities.Streamer, stop <-chan struct
 	}
 }
 
+func (m *Miner) refreshStreamForPreference(streamer *entities.Streamer) {
+	if streamer == nil || !streamer.IsOnline || m.twitch == nil {
+		return
+	}
+	if streamer.Stream != nil {
+		if strings.TrimSpace(streamer.Stream.GameName()) != "" && !streamer.Stream.UpdateRequired() {
+			return
+		}
+	}
+	if err := m.twitch.UpdateStream(streamer); err != nil {
+		if errors.Is(err, classpkg.ErrStreamerOffline) {
+			m.setPresence(streamer, false, "stream-info")
+		} else {
+			m.logger.Debugf("stream info %s: %v", streamer.Username, err)
+		}
+	}
+}
+
+func (m *Miner) resolveGameName(streamer *entities.Streamer) string {
+	if streamer == nil {
+		return ""
+	}
+	if streamer.Stream != nil {
+		if name := strings.TrimSpace(streamer.Stream.GameName()); name != "" {
+			return name
+		}
+	}
+	if !m.showGameInfo || m.twitch == nil || !streamer.IsOnline {
+		return ""
+	}
+	if err := m.twitch.UpdateStream(streamer); err != nil {
+		if m.logger != nil && m.logger.DebugEnabled() {
+			m.logger.Debugf("update stream %s for game: %v", streamer.Username, err)
+		}
+		return ""
+	}
+	if streamer.Stream != nil {
+		return strings.TrimSpace(streamer.Stream.GameName())
+	}
+	return ""
+}
+
+func (m *Miner) gameSuffix(streamer *entities.Streamer) string {
+	// name, hasDrops := m.gameInfo(streamer)
+	name := m.gameInfo(streamer)
+	switch {
+	// case name != "" && hasDrops:
+	case name != "":
+		// return fmt.Sprintf("%s %s", name, m.dropIndicator())
+		return fmt.Sprintf("%s", name)
+	case name != "":
+		return name
+	// case hasDrops:
+	// 	return m.dropIndicator()
+	default:
+		return ""
+	}
+}
+
+// func (m *Miner) gameInfo(streamer *entities.Streamer) (string, bool) {
+func (m *Miner) gameInfo(streamer *entities.Streamer) string {
+	// hasDrops := m.showDropsIndicator && m.streamHasDrops(streamer)
+	// if !m.showGameInfo {
+	// 	return "", hasDrops
+	// }
+	// return m.resolveGameName(streamer), hasDrops
+	return m.resolveGameName(streamer)
+}
+
+func (m *Miner) watchContext(streamer *entities.Streamer) string {
+	// name, hasDrops := m.gameInfo(streamer)
+	name := m.gameInfo(streamer)
+	if name != "" {
+		label := fmt.Sprintf("| %sGame:%s", colorGameLabel, colorReset)
+		// if hasDrops {
+		// 	return fmt.Sprintf("%s %s %s", label, name, m.dropIndicator())
+		// }
+		return fmt.Sprintf("%s %s", label, name)
+	}
+	// if hasDrops {
+	// 	return m.dropIndicator()
+	// }
+	return ""
+}
+
+// TODO: Fix Available Campaigns
+// func (m *Miner) dropIndicator() string {
+// 	if !m.showDropsIndicator {
+// 		return ""
+// 	}
+// 	return fmt.Sprintf("%s(DROPS)%s", colorDropsAccent, colorReset)
+// }
+
+// func (m *Miner) streamHasDrops(streamer *entities.Streamer) bool {
+// 	if streamer == nil || streamer.Stream == nil {
+// 		return false
+// 	}
+// 	return m.twitch != nil && m.twitch.GameHasActiveDrops(streamer.Stream)
+// }
+
+// func (m *Miner) refreshCampaigns(streamer *entities.Streamer) {
+// 	if streamer == nil || streamer.Stream == nil || m.twitch == nil {
+// 		return
+// 	}
+// 	if !(streamer.Settings.ClaimDrops || m.showDropsIndicator) {
+// 		return
+// 	}
+// 	campaigns, hasDrops, err := m.twitch.CampaignIDsForStreamer(streamer)
+// 	if err != nil {
+// 		if m.logger != nil && m.logger.DebugEnabled() {
+// 			m.logger.Debugf("campaigns for %s: %v", streamer.Username, err)
+// 		}
+// 		return
+// 	}
+// 	streamer.Stream.CampaignIDs = campaigns
+// 	streamer.Stream.CampaignsResolved = true
+// 	streamer.Stream.DropsActive = hasDrops || m.twitch.GameHasActiveDrops(streamer.Stream)
+// }
+
+//	func (m *Miner) logAvailableCampaigns() {
+//		if m.logger == nil || m.twitch == nil {
+//			return
+//		}
+//		summaries := m.twitch.AvailableCampaignSummaries()
+//		if len(summaries) == 0 {
+//			m.logger.Printf("Active drop campaigns: none detected")
+//			return
+//		}
+//		m.logger.Printf("Active drop campaigns (%d):", len(summaries))
+//		for _, summary := range summaries {
+//			m.logger.Printf(" - %s", summary)
+//		}
+//	}
+func (m *Miner) gamePreference(streamer *entities.Streamer) (int, bool) {
+	baseRank := len(m.gamePriority) + 1
+	if streamer == nil || streamer.Stream == nil {
+		return baseRank, false
+	}
+	name := strings.ToLower(strings.TrimSpace(streamer.Stream.GameName()))
+	if name == "" {
+		return baseRank, false
+	}
+	if _, ok := m.gameExclusions[name]; ok {
+		return 0, true
+	}
+	if idx, ok := m.gamePriorityIndex[name]; ok {
+		return idx, false
+	}
+	return baseRank, false
+}
+
 func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities.Streamer {
 	now := time.Now()
-	candidates := make([]int, 0, len(streamers))
+	type candidate struct {
+		idx      int
+		rank     int
+		game     string
+		position int
+	}
+	candidates := make([]candidate, 0, len(streamers))
 	for idx, s := range streamers {
 		if s == nil || !s.IsOnline {
 			continue
@@ -333,25 +562,81 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 		if !s.OnlineAt.IsZero() && now.Sub(s.OnlineAt) < 30*time.Second {
 			continue
 		}
-		candidates = append(candidates, idx)
+		m.refreshStreamForPreference(s)
+		if s == nil || !s.IsOnline {
+			continue
+		}
+		rank, excluded := m.gamePreference(s)
+		if excluded {
+			continue
+		}
+		game := ""
+		if s.Stream != nil {
+			game = strings.ToLower(strings.TrimSpace(s.Stream.GameName()))
+		}
+		candidates = append(candidates, candidate{idx: idx, rank: rank, game: game, position: len(candidates)})
+	}
+
+	sortCandidates := func(list []candidate, less func(a, b candidate) bool, includeGameRank bool) []candidate {
+		out := append([]candidate(nil), list...)
+		sort.SliceStable(out, func(i, j int) bool {
+			a, b := out[i], out[j]
+			if less != nil {
+				ai := less(a, b)
+				aj := less(b, a)
+				if ai && !aj {
+					return true
+				}
+				if aj && !ai {
+					return false
+				}
+			}
+			if includeGameRank && a.rank != b.rank {
+				return a.rank < b.rank
+			}
+			return a.position < b.position
+		})
+		return out
 	}
 
 	selected := make([]int, 0, maxConcurrentWatchers)
 	seen := make(map[int]struct{})
-	add := func(idx int) {
+	selectedGames := make(map[string]struct{})
+	add := func(c candidate) {
 		if len(selected) >= maxConcurrentWatchers {
 			return
 		}
-		if _, ok := seen[idx]; ok {
+		if _, ok := seen[c.idx]; ok {
 			return
 		}
-		seen[idx] = struct{}{}
-		selected = append(selected, idx)
+		game := c.game
+		if game != "" {
+			if _, ok := selectedGames[game]; ok {
+				otherAvailable := false
+				for _, alt := range candidates {
+					if _, picked := seen[alt.idx]; picked {
+						continue
+					}
+					if alt.game != "" && alt.game != game {
+						otherAvailable = true
+						break
+					}
+				}
+				if otherAvailable {
+					return
+				}
+			}
+		}
+		seen[c.idx] = struct{}{}
+		if game != "" {
+			selectedGames[game] = struct{}{}
+		}
+		selected = append(selected, c.idx)
 	}
 
-	pick := func(indices []int) {
-		for _, idx := range indices {
-			add(idx)
+	pick := func(list []candidate, includeGameRank bool, less func(a, b candidate) bool) {
+		for _, c := range sortCandidates(list, less, includeGameRank) {
+			add(c)
 			if len(selected) >= maxConcurrentWatchers {
 				break
 			}
@@ -364,50 +649,48 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 		}
 		switch priority {
 		case watchPriorityOrder:
-			pick(candidates)
+			pick(candidates, false, nil)
 		case watchPriorityStreak:
-			streaks := make([]int, 0, len(candidates))
-			for _, idx := range candidates {
-				if m.shouldPrioritizeStreak(streamers[idx], now) {
-					streaks = append(streaks, idx)
+			streaks := make([]candidate, 0, len(candidates))
+			for _, c := range candidates {
+				if m.shouldPrioritizeStreak(streamers[c.idx], now) {
+					streaks = append(streaks, c)
 				}
 			}
-			pick(streaks)
+			pick(streaks, true, nil)
 		case watchPriorityDrops:
-			drops := make([]int, 0, len(candidates))
-			for _, idx := range candidates {
-				s := streamers[idx]
+			drops := make([]candidate, 0, len(candidates))
+			for _, c := range candidates {
+				s := streamers[c.idx]
 				if s == nil || s.Stream == nil {
 					continue
 				}
-				if s.Settings.ClaimDrops && len(s.Stream.CampaignIDs) > 0 {
-					drops = append(drops, idx)
+				// if s.Settings.ClaimDrops && m.streamHasDrops(s) {
+				if s.Settings.ClaimDrops {
+					drops = append(drops, c)
 				}
 			}
-			pick(drops)
+			pick(drops, true, nil)
 		case watchPrioritySubscribed:
-			subscribed := append([]int(nil), candidates...)
-			sort.SliceStable(subscribed, func(i, j int) bool {
-				return streamers[subscribed[i]].TotalMultiplier() > streamers[subscribed[j]].TotalMultiplier()
+			subscribed := append([]candidate(nil), candidates...)
+			pick(subscribed, true, func(a, b candidate) bool {
+				return streamers[a.idx].TotalMultiplier() > streamers[b.idx].TotalMultiplier()
 			})
-			pick(subscribed)
 		case watchPriorityPointsAscending:
-			asc := append([]int(nil), candidates...)
-			sort.SliceStable(asc, func(i, j int) bool {
-				return streamers[asc[i]].ChannelPoints < streamers[asc[j]].ChannelPoints
+			asc := append([]candidate(nil), candidates...)
+			pick(asc, true, func(a, b candidate) bool {
+				return streamers[a.idx].ChannelPoints < streamers[b.idx].ChannelPoints
 			})
-			pick(asc)
 		case watchPriorityPointsDescending:
-			desc := append([]int(nil), candidates...)
-			sort.SliceStable(desc, func(i, j int) bool {
-				return streamers[desc[i]].ChannelPoints > streamers[desc[j]].ChannelPoints
+			desc := append([]candidate(nil), candidates...)
+			pick(desc, true, func(a, b candidate) bool {
+				return streamers[a.idx].ChannelPoints > streamers[b.idx].ChannelPoints
 			})
-			pick(desc)
 		}
 	}
 
 	if len(selected) < maxConcurrentWatchers {
-		pick(candidates)
+		pick(candidates, true, nil)
 	}
 
 	watchList := make([]*entities.Streamer, 0, len(selected))
@@ -541,13 +824,30 @@ func (m *Miner) logOnline(streamer *entities.Streamer) {
 	name := displayName(streamer.Username)
 	m.logger.EmojiPrintf(":speech_balloon:", "Join IRC Chat: %s", streamer.Username)
 	points := formatChannelPoints(streamer.ChannelPoints)
-	m.logger.EmojiPrintf(":partying_face:", "%s (%s%s%s points) is %sOnline%s!", name, colorCyan, points, colorReset, colorGreen, colorReset)
+	gameSuffix := ""
+	if suffix := m.gameSuffix(streamer); suffix != "" {
+		gameSuffix = fmt.Sprintf(" | %s %s", fmt.Sprintf("%sPlaying:%s", colorGameLabel, colorReset), suffix)
+	}
+	m.logger.EmojiPrintf(":partying_face:", "%s (%s%s%s points) is %sOnline%s!%s", name, colorCyan, points, colorReset, colorGreen, colorReset, gameSuffix)
 }
 
 func (m *Miner) logOffline(streamer *entities.Streamer) {
 	name := displayName(streamer.Username)
 	points := formatChannelPoints(streamer.ChannelPoints)
 	m.logger.EmojiPrintf(":sleeping:", "%s (%s%s%s points) is %sOffline%s!", name, colorCyan, points, colorReset, colorRed, colorReset)
+}
+
+func (m *Miner) handleGameChange(streamer *entities.Streamer, previous, current string) {
+	if m == nil || m.logger == nil || !m.showGameInfo {
+		return
+	}
+	current = strings.TrimSpace(current)
+	previous = strings.TrimSpace(previous)
+	// ? Skip initial load while bringing a streamer online to avoid duplicate "now playing" spam.
+	if current == "" || previous == "" || strings.EqualFold(previous, current) {
+		return
+	}
+	m.logger.EmojiPrintf(":video_game:", "%s now playing: %s!", displayName(streamer.Username), current)
 }
 
 func displayName(name string) string {
@@ -653,6 +953,12 @@ func (m *Miner) logPointsDelta(streamer *entities.Streamer, delta int, reason st
 	if reason == "" {
 		return
 	}
+	reasonDisplay := reason
+	if reason == "WATCH" {
+		if ctx := m.watchContext(streamer); ctx != "" {
+			reasonDisplay = fmt.Sprintf("%s %s", reason, ctx)
+		}
+	}
 	m.logger.EmojiPrintf(
 		":rocket:",
 		"%s%s%d%s → %s (%s%s%s points) - Reason: %s",
@@ -664,7 +970,7 @@ func (m *Miner) logPointsDelta(streamer *entities.Streamer, delta int, reason st
 		colorCyan,
 		points,
 		colorReset,
-		reason,
+		reasonDisplay,
 	)
 }
 
@@ -728,6 +1034,9 @@ func (m *Miner) setPresence(streamer *entities.Streamer, online bool, reason str
 	}
 	streamer.IsOnline = online
 	m.updateChatPresence(streamer, online)
+	if online && m.showGameInfo {
+		m.resolveGameName(streamer)
+	}
 	if !prevKnown {
 		if online {
 			m.logOnline(streamer)

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"TwitchChannelPointsMiner/TwitchChannelPointsMiner/classes/entities"
@@ -29,16 +30,22 @@ type debugLogger interface {
 }
 
 type Twitch struct {
-	userAgent      string
-	deviceID       string
-	clientSession  string
-	clientVersion  string
-	twitchLogin    *TwitchLogin
-	client         *http.Client
-	twilightRegexp *regexp.Regexp
-	settingsRegex  *regexp.Regexp
-	spadeRegex     *regexp.Regexp
-	logger         debugLogger
+	userAgent       string
+	deviceID        string
+	clientSession   string
+	clientVersion   string
+	integrityToken  string
+	integrityExpiry time.Time
+	integrityMu     sync.Mutex
+	cookiesPath     string
+	twitchLogin     *TwitchLogin
+	client          *http.Client
+	twilightRegexp  *regexp.Regexp
+	settingsRegex   *regexp.Regexp
+	spadeRegex      *regexp.Regexp
+	logger          debugLogger
+	onGameChange    func(streamer *entities.Streamer, previous, current string)
+	activeDropGames map[string]struct{}
 }
 
 type ClaimedDrop struct {
@@ -66,7 +73,14 @@ func NewTwitch(username, userAgent, password string, logger debugLogger) (*Twitc
 		settingsRegex:  regexp.MustCompile(`(https://static\.twitchcdn\.net/config/settings.*?\.js|https://assets\.twitch\.tv/config/settings.*?\.js)`),
 		spadeRegex:     regexp.MustCompile(`"spade_url":"(.*?)"`),
 		logger:         logger,
+		// TODO: Fix Available Campaigns
+		// activeDropGames: make(map[string]struct{}),
 	}, nil
+}
+
+// ? SetGameChangeHandler registers a callback fired whenever stream game metadata changes.
+func (t *Twitch) SetGameChangeHandler(handler func(streamer *entities.Streamer, previous, current string)) {
+	t.onGameChange = handler
 }
 
 func (t *Twitch) Login(username string) error {
@@ -305,6 +319,7 @@ func (t *Twitch) UpdateStream(streamer *entities.Streamer) error {
 	if !streamer.Stream.UpdateRequired() {
 		return nil
 	}
+	prevGame := strings.TrimSpace(streamer.Stream.GameName())
 	info, err := t.streamInfo(streamer.Username)
 	if err != nil {
 		return err
@@ -340,9 +355,12 @@ func (t *Twitch) UpdateStream(streamer *entities.Streamer) error {
 		if id, ok := game["id"].(string); ok {
 			eventProps["game_id"] = id
 		}
+		// campaigns, hasGameDrops, err := t.CampaignIDsForStreamer(streamer)
 		campaigns, err := t.CampaignIDsForStreamer(streamer)
 		if err == nil {
 			streamer.Stream.CampaignIDs = campaigns
+			// streamer.Stream.CampaignsResolved = true
+			// streamer.Stream.DropsActive = hasGameDrops
 		}
 	}
 	streamer.Stream.Payload = []map[string]interface{}{
@@ -350,6 +368,11 @@ func (t *Twitch) UpdateStream(streamer *entities.Streamer) error {
 			"event":      "minute-watched",
 			"properties": eventProps,
 		},
+	}
+	if t.onGameChange != nil {
+		if gameName := strings.TrimSpace(streamer.Stream.GameName()); gameName != "" && gameName != prevGame {
+			t.onGameChange(streamer, prevGame, gameName)
+		}
 	}
 	return nil
 }

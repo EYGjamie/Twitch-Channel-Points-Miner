@@ -25,6 +25,8 @@ Go rewrite of [0x8fv/Twitch-Channel-Points-Miner-v2](https://github.com/0x8fv/Tw
 - `claim_drops_startup`, `claim_drops`, `follow_raid`: Auto-claim drops at boot, continue claiming while running, and auto-follow raid targets.
 - `betting(make_predictions)`: Enable Twitch prediction betting.
 - `streamers`: List of channel logins to mine; if empty, followers are mined in descending follow order.
+- `show_game`: When true, log the game a streamer is playing on join and on watch-point gains.
+- `game_priority` / `game_exclude`: Ordered game names to prefer and names to skip entirely. Leave empty to keep the default behavior; matches are case-insensitive.
 - `bet`: Advanced prediction tuning. Defaults are applied when values are `null`:
   - `strategy`: Default `SMART` (see `entities.Strategy` for options such as `MOST_VOTED`, `HIGH_ODDS`, `SMART_MONEY`, etc.).
   - `percentage`: Percent of points to bet (default 5).

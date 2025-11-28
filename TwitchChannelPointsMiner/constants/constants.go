@@ -9,12 +9,14 @@ const (
 	DropID        = "c2542d6d-cd10-4532-919b-3d19f30a768b"
 	ClientVersion = "ef928475-9403-42f2-8a34-55784bd08e16"
 	Branch        = "master"
-	Version       = "0.0.6 - BETA"
+	Version       = "0.0.7 - BETA"
 
-	ColorGreen = "\033[38;5;46m"
-	ColorRed   = "\033[38;5;196m"
-	ColorCyan  = "\033[38;5;14m"
-	ColorReset = "\033[0m"
+	ColorGreen  = "\033[38;5;46m"
+	ColorRed    = "\033[38;5;196m"
+	ColorCyan   = "\033[38;5;14m"
+	ColorPurple = "\033[38;5;141m"
+	ColorYellow = "\033[38;5;220m"
+	ColorReset  = "\033[0m"
 )
 
 type GQLPersistedOperation struct {
