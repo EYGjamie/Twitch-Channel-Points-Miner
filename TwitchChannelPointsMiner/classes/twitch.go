@@ -27,6 +27,9 @@ var ErrStreamerOffline = errors.New("streamer offline")
 type debugLogger interface {
 	Debugf(format string, args ...interface{})
 	DebugEnabled() bool
+	Printf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+	EmojiPrintf(emoji, format string, args ...interface{})
 }
 
 type Twitch struct {
@@ -37,6 +40,7 @@ type Twitch struct {
 	integrityToken  string
 	integrityExpiry time.Time
 	integrityMu     sync.Mutex
+	integrityCache  map[string]integrityInfo
 	cookiesPath     string
 	twitchLogin     *TwitchLogin
 	client          *http.Client
@@ -55,6 +59,11 @@ type ClaimedDrop struct {
 	RequiredValue int
 }
 
+type integrityInfo struct {
+	Token  string
+	Expiry time.Time
+}
+
 func NewTwitch(username, userAgent, password string, logger debugLogger) (*Twitch, error) {
 	deviceID := randomString(32)
 	login, err := NewTwitchLogin(constants.ClientID, deviceID, username, userAgent, password)
@@ -65,10 +74,11 @@ func NewTwitch(username, userAgent, password string, logger debugLogger) (*Twitc
 	return &Twitch{
 		userAgent:      userAgent,
 		deviceID:       deviceID,
-		clientSession:  randomString(32),
+		clientSession:  randomHex(8),
 		clientVersion:  constants.ClientVersion,
 		twitchLogin:    login,
 		client:         login.Client(),
+		integrityCache: make(map[string]integrityInfo),
 		twilightRegexp: regexp.MustCompile(`window\.__twilightBuildID\s*=\s*"([0-9a-fA-F\-]{36})"`),
 		settingsRegex:  regexp.MustCompile(`(https://static\.twitchcdn\.net/config/settings.*?\.js|https://assets\.twitch\.tv/config/settings.*?\.js)`),
 		spadeRegex:     regexp.MustCompile(`"spade_url":"(.*?)"`),
@@ -127,6 +137,10 @@ func (t *Twitch) UpdateClientVersion() string {
 }
 
 func (t *Twitch) PostGQL(payload interface{}) (map[string]interface{}, error) {
+	return t.postGQLWithHeaders(payload, nil)
+}
+
+func (t *Twitch) postGQLWithHeaders(payload interface{}, extraHeaders map[string]string) (map[string]interface{}, error) {
 	if payload == nil {
 		return map[string]interface{}{}, nil
 	}
@@ -139,6 +153,9 @@ func (t *Twitch) PostGQL(payload interface{}) (map[string]interface{}, error) {
 	req.Header.Set("User-Agent", t.userAgent)
 	req.Header.Set("X-Device-Id", t.deviceID)
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -151,6 +168,9 @@ func (t *Twitch) PostGQL(payload interface{}) (map[string]interface{}, error) {
 		return nil, err
 	}
 	t.debugf("GQL %s | Status %d | Request: %s | Response: %s", operationName(payload), resp.StatusCode, strings.TrimSpace(string(body)), strings.TrimSpace(string(respBody)))
+	if t.logger != nil && t.logger.DebugEnabled() {
+		t.logger.Debugf("GQL %s | Status %d | Headers: %v | Request: %s | Response: %s", operationName(payload), resp.StatusCode, req.Header, strings.TrimSpace(string(body)), strings.TrimSpace(string(respBody)))
+	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, err
@@ -250,8 +270,22 @@ func (t *Twitch) LoadChannelPointsContext(streamer *entities.Streamer) (int, err
 		t.ContributeToCommunityGoals(streamer)
 	}
 	if available := navigate(resp, "data.community.channel.self.communityPoints.availableClaim"); available != nil {
-		if claimID, ok := navigate(available, "id").(string); ok && claimID != "" {
-			_ = t.ClaimBonus(streamer, claimID)
+		claimID := fmt.Sprint(navigate(available, "id"))
+		if claimID == "" || claimID == "<nil>" {
+			if t.logger != nil && t.logger.DebugEnabled() {
+				t.logger.Debugf("availableClaim present but missing id for %s: %v", streamer.Username, available)
+			}
+			return balance, nil
+		}
+		if t.logger != nil {
+			t.logger.EmojiPrintf(":gift:", "Pending bonus detected for %s (claim %s, channel %s)", streamer.Username, claimID, streamer.ChannelID)
+		}
+		if err := t.ClaimBonus(streamer, claimID); err != nil {
+			if t.logger != nil {
+				t.logger.Errorf("claim bonus on context load for %s failed: %v", streamer.Username, err)
+			}
+		} else if t.logger != nil {
+			t.logger.Printf("Claim bonus success for %s (claim %s)", streamer.Username, claimID)
 		}
 	}
 	return balance, nil
@@ -463,8 +497,25 @@ func (t *Twitch) SendMinuteWatched(streamer *entities.Streamer) error {
 	return fmt.Errorf("minute watched failed: %d %s", resp.StatusCode, string(bodyBytes))
 }
 
-// ? ClaimBonus redeems the community points bonus (blue chest).
+// ? ClaimBonus redeems the community points bonus.
 func (t *Twitch) ClaimBonus(streamer *entities.Streamer, claimID string) error {
+	if claimID == "" {
+		return fmt.Errorf("missing claim id")
+	}
+	if streamer == nil || streamer.ChannelID == "" {
+		return fmt.Errorf("missing streamer channel id")
+	}
+	return t.claimBonusTV(streamer, claimID)
+}
+
+func (t *Twitch) claimBonusTV(streamer *entities.Streamer, claimID string) error {
+	if streamer == nil || streamer.ChannelID == "" {
+		return fmt.Errorf("missing streamer/channel")
+	}
+	if claimID == "" {
+		return fmt.Errorf("missing claim id")
+	}
+
 	op := constants.GQLOperations.ClaimCommunityPoints
 	if op.Variables == nil {
 		op.Variables = map[string]interface{}{}
@@ -473,8 +524,57 @@ func (t *Twitch) ClaimBonus(streamer *entities.Streamer, claimID string) error {
 		"channelID": streamer.ChannelID,
 		"claimID":   claimID,
 	}
-	_, err := t.PostGQL(op)
-	return err
+
+	reqBody, _ := json.Marshal(op)
+	req, _ := http.NewRequest(http.MethodPost, constants.GQLOperations.URL, bytes.NewReader(reqBody))
+	req.Header.Set("Authorization", fmt.Sprintf("OAuth %s", t.twitchLogin.AuthToken()))
+	req.Header.Set("Client-Id", constants.ClientID)
+	req.Header.Set("Client-Session-Id", t.clientSession)
+	req.Header.Set("Client-Version", t.UpdateClientVersion())
+	req.Header.Set("User-Agent", t.userAgent) // ? Android TV UA
+	req.Header.Set("X-Device-Id", t.deviceID)
+	req.Header.Set("Content-Type", "application/json")
+	authToken := t.twitchLogin.AuthToken()
+	userID := t.twitchLogin.UserID()
+	if authToken != "" && userID != "" {
+		req.Header.Set("Cookie", fmt.Sprintf("auth-token=%s; persistent=%s", authToken, userID))
+	} else if authToken != "" {
+		req.Header.Set("Cookie", fmt.Sprintf("auth-token=%s", authToken))
+	}
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("claim bonus request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if t.logger != nil && t.logger.DebugEnabled() {
+		t.logger.Debugf("ClaimCommunityPoints status=%d headers=%v req=%s resp=%s", resp.StatusCode, req.Header, strings.TrimSpace(string(reqBody)), strings.TrimSpace(string(respBody)))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("claim bonus status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return fmt.Errorf("claim bonus decode: %w", err)
+	}
+
+	if gqlErrs, ok := result["errors"]; ok {
+		return fmt.Errorf("claim bonus gql errors: %v", gqlErrs)
+	}
+	if status := navigate(result, "data.claimCommunityPoints.status"); status != nil {
+		statusStr := strings.ToUpper(fmt.Sprint(status))
+		if statusStr != "" && statusStr != "SUCCESS" && statusStr != "ALREADY_CLAIMED" {
+			return fmt.Errorf("claim bonus status %s (resp=%v)", statusStr, result)
+		}
+	}
+	if msg := navigate(result, "data.claimCommunityPoints.error.message"); msg != nil {
+		return fmt.Errorf("claim bonus error: %v (resp=%v)", msg, result)
+	}
+	return nil
 }
 
 // ? ClaimMoment redeems a community moment callout.

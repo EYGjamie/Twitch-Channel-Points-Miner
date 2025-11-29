@@ -69,6 +69,7 @@ func (p *PubSubClient) Start(stop <-chan struct{}) {
 		p.logger.Errorf("PubSub topic error: %v", err)
 		return
 	}
+	go p.pollPendingClaims(stop)
 	batches := chunkTopics(topics, 50)
 	for i, batch := range batches {
 		idx := i + 1
@@ -255,12 +256,13 @@ func (p *PubSubClient) handleTopicMessage(envelope map[string]interface{}) error
 		return err
 	}
 	msgType := strings.ToLower(fmt.Sprint(payload["type"]))
+	channelID := channelIDFromPayload(payload, topic)
 
 	switch {
 	case msgType == "points-earned":
-		return p.processPointsEarned(payload)
+		return p.processPointsEarned(payload, channelID)
 	case msgType == "claim-available":
-		return p.processClaimAvailable(payload)
+		return p.processClaimAvailable(payload, channelID)
 	case strings.HasPrefix(topic, "video-playback-by-id."):
 		return p.processPlaybackMessage(topic, payload)
 	case strings.HasPrefix(topic, "raid."):
@@ -371,19 +373,22 @@ func (p *PubSubClient) processMomentMessage(topic string, payload map[string]int
 	return nil
 }
 
-func (p *PubSubClient) processPointsEarned(payload map[string]interface{}) error {
+func (p *PubSubClient) processPointsEarned(payload map[string]interface{}, channelID string) error {
 	data, _ := payload["data"].(map[string]interface{})
 	if data == nil {
 		return nil
 	}
-	channelID := fmt.Sprint(data["channel_id"])
+	if channelID == "" {
+		channelID = channelIDFromPayload(payload, "")
+	}
 	if channelID == "" {
 		return nil
 	}
-	streamer, ok := p.streamerMap[channelID]
-	if !ok {
+	streamer := p.streamerMap[channelID]
+	if streamer == nil {
 		return nil
 	}
+
 	pointGainVal := navigate(data, "point_gain")
 	pointGain, _ := pointGainVal.(map[string]interface{})
 	if pointGain == nil {
@@ -401,24 +406,41 @@ func (p *PubSubClient) processPointsEarned(payload map[string]interface{}) error
 	return nil
 }
 
-func (p *PubSubClient) processClaimAvailable(payload map[string]interface{}) error {
+func (p *PubSubClient) processClaimAvailable(payload map[string]interface{}, channelID string) error {
 	data, _ := payload["data"].(map[string]interface{})
 	if data == nil {
 		return nil
 	}
 	claim, _ := data["claim"].(map[string]interface{})
-	claimID, _ := claim["id"].(string)
-	channelID := fmt.Sprint(claim["channel_id"])
+	claimID := stringOrDefault(claim["id"])
+
+	if channelID == "" && claim != nil {
+		channelID = stringValue(claim["channel_id"])
+	}
 	if channelID == "" {
-		channelID = fmt.Sprint(data["channel_id"])
+		channelID = stringValue(data["channel_id"])
+	}
+	if channelID == "" {
+		if balanceID := navigate(data, "balance.channel_id"); balanceID != nil {
+			channelID = stringValue(balanceID)
+		}
+	}
+	if channelID == "" && len(p.streamerMap) == 1 {
+		for id := range p.streamerMap {
+			channelID = id
+		}
 	}
 	streamer := p.streamerMap[channelID]
 	if streamer == nil || claimID == "" {
+		p.logger.Errorf("claim-available ignored: channel=%s claim=%s streamer=%v payload=%v", channelID, claimID, streamer != nil, payload)
 		return nil
 	}
+	// p.logger.EmojiPrintf(":gift:", "Claim bonus for %s (claim %s, channel %s)", streamer.Username, claimID, channelID)
 	if err := p.twitch.ClaimBonus(streamer, claimID); err != nil {
-		p.logger.Errorf("claim bonus %s: %v", streamer.Username, err)
+		p.logger.Errorf("claim bonus %s (channel %s): %v", streamer.Username, channelID, err)
+		return nil
 	}
+	// p.logger.Printf("Claim bonus success for %s (claim %s)", streamer.Username, claimID)
 	return nil
 }
 
@@ -596,6 +618,33 @@ func (p *PubSubClient) randomPingInterval() time.Duration {
 	return time.Duration(randomInt(25, 30)) * time.Second
 }
 
+// ? pollPendingClaims proactively checks each streamer for any outstanding community-point bonuses.
+func (p *PubSubClient) pollPendingClaims(stop <-chan struct{}) {
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+	p.checkPendingClaims()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			p.checkPendingClaims()
+		}
+	}
+}
+
+func (p *PubSubClient) checkPendingClaims() {
+	for _, streamer := range p.streamers {
+		if streamer == nil || streamer.Username == "" || streamer.ChannelID == "" {
+			continue
+		}
+		p.debugf("Checking pending bonus for %s (%s)", streamer.Username, streamer.ChannelID)
+		if _, err := p.twitch.LoadChannelPointsContext(streamer); err != nil {
+			p.logger.Errorf("pending bonus check %s: %v", streamer.Username, err)
+		}
+	}
+}
+
 func chunkTopics(topics []string, chunkSize int) [][]string {
 	if chunkSize <= 0 {
 		return [][]string{topics}
@@ -610,6 +659,50 @@ func chunkTopics(topics []string, chunkSize int) [][]string {
 		topics = topics[end:]
 	}
 	return batches
+}
+
+func stringValue(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	val := strings.TrimSpace(fmt.Sprint(v))
+	if val == "" || val == "<nil>" {
+		return ""
+	}
+	return val
+}
+
+// ? claim/watch events are routed even when Twitch omits certain fields.
+func channelIDFromPayload(payload map[string]interface{}, topic string) string {
+	data, _ := payload["data"].(map[string]interface{})
+	if data != nil {
+		if prediction, ok := data["prediction"].(map[string]interface{}); ok {
+			if id := stringValue(prediction["channel_id"]); id != "" {
+				return id
+			}
+		}
+		if claim, ok := data["claim"].(map[string]interface{}); ok {
+			if id := stringValue(claim["channel_id"]); id != "" {
+				return id
+			}
+		}
+		if id := stringValue(data["channel_id"]); id != "" {
+			return id
+		}
+		if balance, ok := data["balance"].(map[string]interface{}); ok {
+			if id := stringValue(balance["channel_id"]); id != "" {
+				return id
+			}
+		}
+	}
+	if topic != "" {
+		if parts := strings.Split(topic, "."); len(parts) == 2 {
+			if id := strings.TrimSpace(parts[1]); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
 func recordHistory(streamer *entities.Streamer, reason string, amount int) {
