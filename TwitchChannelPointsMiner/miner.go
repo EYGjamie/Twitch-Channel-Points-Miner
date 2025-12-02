@@ -140,11 +140,12 @@ type Miner struct {
 	chatWatchers               map[string]*classpkg.ChatClient
 	chatMu                     sync.Mutex
 	showGameInfo               bool
+	logWatchQueue              bool
 	// showDropsIndicator         bool
 	rawWatchPriorities []string
 }
 
-func NewMiner(username, password string, claimDropsStartup bool, disableCertCheck bool, loggerSettings LoggerSettings, streamerSettings entities.StreamerSettings, priorityNames []string, gamePriority []string, gameExclude []string, showGameInfo bool) *Miner {
+func NewMiner(username, password string, claimDropsStartup bool, disableCertCheck bool, loggerSettings LoggerSettings, streamerSettings entities.StreamerSettings, priorityNames []string, gamePriority []string, gameExclude []string, showGameInfo bool, logWatchQueue bool) *Miner {
 	streamerSettings.Default()
 	priorityList := normalizeGameList(gamePriority)
 	excludedGames := make(map[string]struct{})
@@ -169,6 +170,7 @@ func NewMiner(username, password string, claimDropsStartup bool, disableCertChec
 		gameExclusions:             excludedGames,
 		chatWatchers:               make(map[string]*classpkg.ChatClient),
 		showGameInfo:               showGameInfo,
+		logWatchQueue:              logWatchQueue,
 		// showDropsIndicator:         showDropsIndicator,
 		rawWatchPriorities: priorityNames,
 	}
@@ -549,12 +551,18 @@ func (m *Miner) gamePreference(streamer *entities.Streamer) (int, bool) {
 func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities.Streamer {
 	now := time.Now()
 	type candidate struct {
-		idx      int
-		rank     int
-		game     string
-		position int
+		idx           int
+		rank          int
+		game          string
+		position      int
+		priorityGame  bool
+		isStreakReady bool
 	}
 	candidates := make([]candidate, 0, len(streamers))
+	candidateByIdx := make(map[int]candidate, len(streamers))
+	streakCandidates := make([]candidate, 0, len(streamers))
+	streakIdx := make(map[int]struct{})
+	hasPriorityGameStreak := false
 	for idx, s := range streamers {
 		if s == nil || !s.IsOnline {
 			continue
@@ -574,7 +582,25 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 		if s.Stream != nil {
 			game = strings.ToLower(strings.TrimSpace(s.Stream.GameName()))
 		}
-		candidates = append(candidates, candidate{idx: idx, rank: rank, game: game, position: len(candidates)})
+		_, priorityGame := m.gamePriorityIndex[game]
+		isStreak := m.shouldPrioritizeStreak(s, now)
+		cand := candidate{
+			idx:           idx,
+			rank:          rank,
+			game:          game,
+			position:      len(candidates),
+			priorityGame:  priorityGame,
+			isStreakReady: isStreak,
+		}
+		candidates = append(candidates, cand)
+		candidateByIdx[idx] = cand
+		if isStreak {
+			streakCandidates = append(streakCandidates, cand)
+			streakIdx[idx] = struct{}{}
+			if priorityGame {
+				hasPriorityGameStreak = true
+			}
+		}
 	}
 
 	sortCandidates := func(list []candidate, less func(a, b candidate) bool, includeGameRank bool) []candidate {
@@ -602,7 +628,8 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 	selected := make([]int, 0, maxConcurrentWatchers)
 	seen := make(map[int]struct{})
 	selectedGames := make(map[string]struct{})
-	add := func(c candidate) {
+	selectedReason := make(map[int]string)
+	add := func(c candidate, reason string) {
 		if len(selected) >= maxConcurrentWatchers {
 			return
 		}
@@ -632,16 +659,21 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 			selectedGames[game] = struct{}{}
 		}
 		selected = append(selected, c.idx)
+		if reason != "" {
+			selectedReason[c.idx] = reason
+		}
 	}
 
-	pick := func(list []candidate, includeGameRank bool, less func(a, b candidate) bool) {
+	pick := func(list []candidate, includeGameRank bool, less func(a, b candidate) bool, reason string) {
 		for _, c := range sortCandidates(list, less, includeGameRank) {
-			add(c)
+			add(c, reason)
 			if len(selected) >= maxConcurrentWatchers {
 				break
 			}
 		}
 	}
+
+	skipEarlyStreak := len(m.gamePriority) > 0 && !hasPriorityGameStreak
 
 	for _, priority := range m.watchPriorities {
 		if len(selected) >= maxConcurrentWatchers {
@@ -649,15 +681,18 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 		}
 		switch priority {
 		case watchPriorityOrder:
-			pick(candidates, false, nil)
+			pick(candidates, false, nil, "ORDER")
 		case watchPriorityStreak:
+			if skipEarlyStreak {
+				continue
+			}
 			streaks := make([]candidate, 0, len(candidates))
 			for _, c := range candidates {
 				if m.shouldPrioritizeStreak(streamers[c.idx], now) {
 					streaks = append(streaks, c)
 				}
 			}
-			pick(streaks, true, nil)
+			pick(streaks, true, nil, "STREAK")
 		case watchPriorityDrops:
 			drops := make([]candidate, 0, len(candidates))
 			for _, c := range candidates {
@@ -670,33 +705,105 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 					drops = append(drops, c)
 				}
 			}
-			pick(drops, true, nil)
+			pick(drops, true, nil, "DROPS")
 		case watchPrioritySubscribed:
 			subscribed := append([]candidate(nil), candidates...)
 			pick(subscribed, true, func(a, b candidate) bool {
 				return streamers[a.idx].TotalMultiplier() > streamers[b.idx].TotalMultiplier()
-			})
+			}, "SUBSCRIBED")
 		case watchPriorityPointsAscending:
 			asc := append([]candidate(nil), candidates...)
 			pick(asc, true, func(a, b candidate) bool {
 				return streamers[a.idx].ChannelPoints < streamers[b.idx].ChannelPoints
-			})
+			}, "POINTS_ASC")
 		case watchPriorityPointsDescending:
 			desc := append([]candidate(nil), candidates...)
 			pick(desc, true, func(a, b candidate) bool {
 				return streamers[a.idx].ChannelPoints > streamers[b.idx].ChannelPoints
-			})
+			}, "POINTS_DESC")
+		}
+	}
+
+	hasStreakSelected := false
+	for _, idx := range selected {
+		if _, ok := streakIdx[idx]; ok {
+			hasStreakSelected = true
+			break
+		}
+	}
+	if !hasStreakSelected && len(streakCandidates) > 0 && len(selected) > 0 {
+		var streakPick *candidate
+		for _, c := range sortCandidates(streakCandidates, nil, true) {
+			if _, ok := seen[c.idx]; ok {
+				continue
+			}
+			streakPick = &c
+			break
+		}
+		if streakPick != nil {
+			if len(selected) < maxConcurrentWatchers {
+				add(*streakPick, "FORCE_STREAK_SLOT2")
+			} else {
+				keepIdx := selected[0]
+				selected = selected[:0]
+				seen = make(map[int]struct{})
+				selectedGames = make(map[string]struct{})
+				if keepCand, ok := candidateByIdx[keepIdx]; ok {
+					add(keepCand, selectedReason[keepIdx])
+				}
+				if len(selected) < maxConcurrentWatchers {
+					if _, ok := seen[streakPick.idx]; !ok {
+						seen[streakPick.idx] = struct{}{}
+						if streakPick.game != "" {
+							selectedGames[streakPick.game] = struct{}{}
+						}
+						selected = append(selected, streakPick.idx)
+						selectedReason[streakPick.idx] = "FORCE_STREAK_SLOT2"
+					}
+				}
+			}
+		}
+	}
+
+	if skipEarlyStreak && len(selected) >= 2 {
+		first := candidateByIdx[selected[0]]
+		second := candidateByIdx[selected[1]]
+		if first.isStreakReady && !first.priorityGame && (!second.isStreakReady || second.priorityGame) {
+			selected[0], selected[1] = selected[1], selected[0]
 		}
 	}
 
 	if len(selected) < maxConcurrentWatchers {
-		pick(candidates, true, nil)
+		pick(candidates, true, nil, "FALLBACK")
 	}
 
 	watchList := make([]*entities.Streamer, 0, len(selected))
 	for _, idx := range selected {
 		watchList = append(watchList, streamers[idx])
 	}
+
+	if m.logger != nil && m.logWatchQueue {
+		snap := make([]string, 0, len(selected))
+		for _, idx := range selected {
+			s := streamers[idx]
+			cand := candidateByIdx[idx]
+			reason := selectedReason[idx]
+			if reason == "" {
+				reason = "UNKNOWN"
+			}
+			snap = append(snap, fmt.Sprintf(
+				"%s (reason=%s, streak=%t, priorityGame=%t, rank=%d, pos=%d)",
+				displayName(s.Username),
+				reason,
+				cand.isStreakReady,
+				cand.priorityGame,
+				cand.rank,
+				cand.position,
+			))
+		}
+		m.logger.Printf("WATCH queue: %s", strings.Join(snap, " | "))
+	}
+
 	return watchList
 }
 

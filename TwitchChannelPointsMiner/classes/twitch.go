@@ -354,6 +354,7 @@ func (t *Twitch) UpdateStream(streamer *entities.Streamer) error {
 		return nil
 	}
 	prevGame := strings.TrimSpace(streamer.Stream.GameName())
+	prevBroadcastID := streamer.Stream.BroadcastID
 	info, err := t.streamInfo(streamer.Username)
 	if err != nil {
 		return err
@@ -375,6 +376,10 @@ func (t *Twitch) UpdateStream(streamer *entities.Streamer) error {
 		viewers,
 		constants.DropID,
 	)
+	if prevBroadcastID != "" && prevBroadcastID != streamer.Stream.BroadcastID {
+		streamer.Stream.WatchStreakMissing = true
+		streamer.Stream.MinuteWatched = 0
+	}
 
 	eventProps := map[string]interface{}{
 		"channel_id":   streamer.ChannelID,

@@ -351,6 +351,9 @@ func (p *PubSubClient) processPlaybackMessage(topic string, payload map[string]i
 	case "stream-up":
 		if streamer.Stream == nil {
 			streamer.Stream = entities.NewStream()
+		} else {
+			streamer.Stream.WatchStreakMissing = true
+			streamer.Stream.MinuteWatched = 0
 		}
 		streamer.Stream.StreamUpAt = time.Now()
 		p.onPresence(streamer, true, msgType)

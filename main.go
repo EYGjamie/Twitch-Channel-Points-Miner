@@ -30,6 +30,7 @@ type config struct {
 	Password                   string `json:"password"`
 	AutoUpdate                 bool   `json:"auto_update"`
 	Debug                      bool   `json:"debug"`
+	WatchQueueLogging          bool   `json:"watch_queue_logging"`
 	SmartLogging               bool   `json:"smart_logging"`
 	DisableSSLCertVerification bool   `json:"disable_ssl_cert_verification"`
 	ShowSeconds                bool   `json:"show_seconds"`
@@ -79,6 +80,7 @@ func defaultConfig() map[string]interface{} {
 		"password":                      "your-twitch-password (Optional)",
 		"auto_update":                   true,
 		"debug":                         false,
+		"watch_queue_logging":           false,
 		"smart_logging":                 true,
 		"disable_ssl_cert_verification": false,
 		"show_seconds":                  false,
@@ -231,6 +233,7 @@ func main() {
 		cfg.GamePriority,
 		cfg.GameExclude,
 		cfg.ShowGame,
+		cfg.WatchQueueLogging,
 		// cfg.ShowDropsIndicator,
 	)
 
