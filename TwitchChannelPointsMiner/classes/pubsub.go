@@ -98,7 +98,43 @@ func (p *PubSubClient) connectAndListen(connIndex int, topics []string, stop <-c
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+
+	lastPong := time.Now()
+	pingTimer := time.NewTimer(p.randomPingInterval())
+	defer pingTimer.Stop()
+
+	msgCh := make(chan []byte, 256)
+	workerCount := 4
+	var workerWG sync.WaitGroup
+	workerWG.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer workerWG.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				case raw, ok := <-msgCh:
+					if !ok {
+						return
+					}
+					if err := p.handleMessage(raw, nil); err != nil {
+						p.logger.Errorf("PubSub message error: %v", err)
+					}
+				}
+			}
+		}()
+	}
+
+	var readWG sync.WaitGroup
+	readWG.Add(1)
+
+	defer func() {
+		conn.Close()
+		readWG.Wait()
+		close(msgCh)
+		workerWG.Wait()
+	}()
 
 	if err := p.listenTopics(conn, topics); err != nil {
 		return err
@@ -106,21 +142,36 @@ func (p *PubSubClient) connectAndListen(connIndex int, topics []string, stop <-c
 
 	p.logger.Printf("Connected to Twitch PubSub (conn #%d) with %d topic(s)", connIndex, len(topics))
 
-	lastPong := time.Now()
-	pingTimer := time.NewTimer(p.randomPingInterval())
-	defer pingTimer.Stop()
-
 	readErr := make(chan error, 1)
 	go func() {
+		defer readWG.Done()
 		for {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
-				readErr <- err
+				select {
+				case readErr <- err:
+				default:
+				}
 				return
 			}
 			p.debugf("PubSub[%d] recv: %s", connIndex, strings.TrimSpace(string(message)))
-			if err := p.handleMessage(message, func() { lastPong = time.Now() }); err != nil {
-				p.logger.Errorf("PubSub message error: %v", err)
+
+			msgType := ""
+			var envelope map[string]interface{}
+			if err := json.Unmarshal(message, &envelope); err == nil {
+				if t, ok := envelope["type"].(string); ok {
+					msgType = strings.ToUpper(strings.TrimSpace(t))
+				}
+			}
+			if msgType == "PONG" {
+				lastPong = time.Now()
+				continue
+			}
+
+			select {
+			case msgCh <- message:
+			default:
+				p.logger.Errorf("PubSub[%d] dropping message: worker queue full", connIndex)
 			}
 		}
 	}()
