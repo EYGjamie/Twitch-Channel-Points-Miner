@@ -66,6 +66,14 @@ func (s *Stream) UpdateMinuteWatched() {
 	s.lastMinuteUpdate = time.Now()
 }
 
+func (s *Stream) ResetWatchProgress() {
+	if s == nil {
+		return
+	}
+	s.MinuteWatched = 0
+	s.lastMinuteUpdate = time.Time{}
+}
+
 func (s *Stream) LastUpdateAgo() time.Duration {
 	if s == nil || s.lastUpdate.IsZero() {
 		return 0

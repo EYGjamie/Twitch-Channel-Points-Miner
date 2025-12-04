@@ -378,7 +378,7 @@ func (t *Twitch) UpdateStream(streamer *entities.Streamer) error {
 	)
 	if prevBroadcastID != "" && prevBroadcastID != streamer.Stream.BroadcastID {
 		streamer.Stream.WatchStreakMissing = true
-		streamer.Stream.MinuteWatched = 0
+		streamer.Stream.ResetWatchProgress()
 	}
 
 	eventProps := map[string]interface{}{
