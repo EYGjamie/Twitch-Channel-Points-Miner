@@ -27,6 +27,11 @@ const (
 	colorReset       = constants.ColorReset
 )
 
+const (
+	streakPriorityMinutesBase     = 7.0
+	streakPriorityMinutesExtended = 20.0
+)
+
 type watchPriority int
 
 const (
@@ -783,25 +788,38 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 	}
 
 	if m.logger != nil && m.logWatchQueue {
-		snap := make([]string, 0, len(selected))
-		for _, idx := range selected {
+		interval := m.watchInterval(len(selected))
+		lines := make([]string, 0, len(selected)+1)
+		lines = append(lines, fmt.Sprintf("WATCH queue (≈%s between streamers):", formatDuration(interval)))
+		for slot, idx := range selected {
 			s := streamers[idx]
 			cand := candidateByIdx[idx]
 			reason := selectedReason[idx]
 			if reason == "" {
 				reason = "UNKNOWN"
 			}
-			snap = append(snap, fmt.Sprintf(
-				"%s (reason=%s, streak=%t, priorityGame=%t, rank=%d, pos=%d)",
+			streakRemain := ""
+			if s != nil && s.Stream != nil && s.Stream.WatchStreakMissing {
+				remainingMinutes := m.streakPriorityLimit(now) - s.Stream.MinuteWatched
+				if remainingMinutes < 0 {
+					remainingMinutes = 0
+				}
+				remaining := time.Duration(remainingMinutes * float64(time.Minute))
+				streakRemain = fmt.Sprintf(", streakRemaining=%s", formatDuration(remaining))
+			}
+			detail := fmt.Sprintf(
+				"%s (reason=%s, streak=%t, priorityGame=%t, rank=%d, pos=%d%s)",
 				displayName(s.Username),
 				reason,
 				cand.isStreakReady,
 				cand.priorityGame,
 				cand.rank,
 				cand.position,
-			))
+				streakRemain,
+			)
+			lines = append(lines, fmt.Sprintf("SLOT %d: %s", slot+1, detail))
 		}
-		m.logger.Printf("WATCH queue: %s", strings.Join(snap, " | "))
+		m.logger.Printf(strings.Join(lines, "\n"))
 	}
 
 	return watchList
@@ -817,7 +835,24 @@ func (m *Miner) shouldPrioritizeStreak(streamer *entities.Streamer, now time.Tim
 	if !streamer.OfflineAt.IsZero() && now.Sub(streamer.OfflineAt) <= 30*time.Minute {
 		return false
 	}
-	return streamer.Stream.MinuteWatched < 7
+	// ? Keep streak priority long enough for Twitch to issue the streak check (typically ~15 minutes).
+	return streamer.Stream.MinuteWatched < m.streakPriorityLimit(now)
+}
+
+// ? streakPriorityLimit adjusts streak priority duration:
+// ? - default 7 minutes
+// ? - extended to 20 minutes after 10 hours runtime to avoid churn late in long sessions.
+func (m *Miner) streakPriorityLimit(now time.Time) float64 {
+	if m == nil {
+		return streakPriorityMinutesBase
+	}
+	if m.startedAt.IsZero() {
+		return streakPriorityMinutesBase
+	}
+	if now.Sub(m.startedAt) > 10*time.Hour {
+		return streakPriorityMinutesExtended
+	}
+	return streakPriorityMinutesBase
 }
 
 func (m *Miner) watchInterval(count int) time.Duration {
