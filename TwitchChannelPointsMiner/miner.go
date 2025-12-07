@@ -1244,6 +1244,9 @@ func (m *Miner) stopChatWatcher(streamer *entities.Streamer) {
 	}
 	m.chatMu.Unlock()
 	if ok && watcher != nil {
+		if m.logger != nil {
+			m.logger.EmojiPrintf(":speech_balloon:", "Leave IRC Chat: %s", streamer.Username)
+		}
 		watcher.Stop()
 	}
 }
