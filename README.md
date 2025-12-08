@@ -39,6 +39,7 @@ Go rewrite of [0x8fv/Twitch-Channel-Points-Miner-v2](https://github.com/0x8fv/Tw
 ## How it works
 - Authenticates via Twitch device flow, persists cookies per user, and refreshes the client build id for GQL calls.
 - Loads channel points context to grab balances and blue chests; watches two live streams at a time for minute-watched events to keep streaks active.
+- If you have an active subscription (multiplier) on a streamer, their name is highlighted in gold everywhere it appears in the logs so you can quickly spot priority channels.
 - Listens to PubSub (`community-points-user-v1`) for instant point gain updates and logs deltas with reasons.
 - Periodically claims inventory drops and can auto-join raids and continue mining the destination channel.
 

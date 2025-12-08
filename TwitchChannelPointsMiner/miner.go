@@ -334,7 +334,7 @@ func (m *Miner) contextRefresher(streamers []*entities.Streamer, stop <-chan str
 			for _, s := range streamers {
 				prev := s.ChannelPoints
 				if _, err := m.twitch.LoadChannelPointsContext(s); err != nil {
-					m.logger.Printf("refresh %s: %v", s.Username, err)
+					m.logger.Printf("refresh %s: %v", styledStreamerName(s), err)
 				} else {
 					m.handlePointsUpdate(s, prev, "")
 					// TODO: Fix Available Campaigns
@@ -373,7 +373,7 @@ func (m *Miner) minuteWatcher(streamers []*entities.Streamer, stop <-chan struct
 
 			if streamer.Stream != nil && streamer.Stream.LastUpdateAgo() > 10*time.Minute {
 				if _, err := m.twitch.CheckStreamerOnline(streamer); err != nil {
-					m.logger.Printf("online check %s: %v", streamer.Username, err)
+					m.logger.Printf("online check %s: %v", styledStreamerName(streamer), err)
 				}
 				if !streamer.IsOnline {
 					continue
@@ -384,15 +384,15 @@ func (m *Miner) minuteWatcher(streamers []*entities.Streamer, stop <-chan struct
 				if errors.Is(err, classpkg.ErrStreamerOffline) {
 					live, liveErr := m.twitch.IsStreamLive(streamer.ChannelID)
 					if liveErr != nil {
-						m.logger.Printf("live check %s: %v", streamer.Username, liveErr)
+						m.logger.Printf("live check %s: %v", styledStreamerName(streamer), liveErr)
 					}
 					if !live {
 						m.setPresence(streamer, false, "minute-watch")
 					} else {
-						m.logger.Printf("minute watch %s: transient offline response, keeping online", streamer.Username)
+						m.logger.Printf("minute watch %s: transient offline response, keeping online", styledStreamerName(streamer))
 					}
 				}
-				m.logger.Printf("minute watch %s: %v", streamer.Username, err)
+				m.logger.Printf("minute watch %s: %v", styledStreamerName(streamer), err)
 			}
 
 			if m.sleepWithStop(interval, stop) {
@@ -415,7 +415,7 @@ func (m *Miner) refreshStreamForPreference(streamer *entities.Streamer) {
 		if errors.Is(err, classpkg.ErrStreamerOffline) {
 			m.setPresence(streamer, false, "stream-info")
 		} else {
-			m.logger.Debugf("stream info %s: %v", streamer.Username, err)
+			m.logger.Debugf("stream info %s: %v", styledStreamerName(streamer), err)
 		}
 	}
 }
@@ -434,7 +434,7 @@ func (m *Miner) resolveGameName(streamer *entities.Streamer) string {
 	}
 	if err := m.twitch.UpdateStream(streamer); err != nil {
 		if m.logger != nil && m.logger.DebugEnabled() {
-			m.logger.Debugf("update stream %s for game: %v", streamer.Username, err)
+			m.logger.Debugf("update stream %s for game: %v", styledStreamerName(streamer), err)
 		}
 		return ""
 	}
@@ -809,7 +809,7 @@ func (m *Miner) pickStreamersToWatch(streamers []*entities.Streamer) []*entities
 			}
 			detail := fmt.Sprintf(
 				"%s (reason=%s, streak=%t, priorityGame=%t, rank=%d, pos=%d%s)",
-				displayName(s.Username),
+				styledStreamerName(s),
 				reason,
 				cand.isStreakReady,
 				cand.priorityGame,
@@ -942,7 +942,7 @@ func (m *Miner) shutdown(sessionID string) {
 			total = -total
 		}
 		points := formatChannelPoints(s.ChannelPoints)
-		m.logger.EmojiPrintf(":moneybag:", "%s (%s%s%s points), Total Points %s%s%d%s", displayName(s.Username), colorCyan, points, colorReset, signColor, sign, total, colorReset)
+		m.logger.EmojiPrintf(":moneybag:", "%s (%s%s%s points), Total Points %s%s%d%s", styledStreamerName(s), colorCyan, points, colorReset, signColor, sign, total, colorReset)
 		if s.History != nil {
 			for reason, entry := range s.History {
 				m.logger.Printf("                         %s (%d times, %d gained)", reason, entry.Count, entry.Amount)
@@ -956,15 +956,15 @@ func (m *Miner) shutdown(sessionID string) {
 func (m *Miner) updatePresence(streamer *entities.Streamer) {
 	online, err := m.twitch.CheckStreamerOnline(streamer)
 	if err != nil {
-		m.logger.Printf("online check %s: %v", streamer.Username, err)
+		m.logger.Printf("online check %s: %v", styledStreamerName(streamer), err)
 		return
 	}
 	m.setPresence(streamer, online, "poll")
 }
 
 func (m *Miner) logOnline(streamer *entities.Streamer) {
-	name := displayName(streamer.Username)
-	m.logger.EmojiPrintf(":speech_balloon:", "Join IRC Chat: %s", streamer.Username)
+	name := styledStreamerName(streamer)
+	m.logger.EmojiPrintf(":speech_balloon:", "Join IRC Chat: %s", name)
 	points := formatChannelPoints(streamer.ChannelPoints)
 	gameSuffix := ""
 	if suffix := m.gameSuffix(streamer); suffix != "" {
@@ -974,7 +974,7 @@ func (m *Miner) logOnline(streamer *entities.Streamer) {
 }
 
 func (m *Miner) logOffline(streamer *entities.Streamer) {
-	name := displayName(streamer.Username)
+	name := styledStreamerName(streamer)
 	points := formatChannelPoints(streamer.ChannelPoints)
 	m.logger.EmojiPrintf(":sleeping:", "%s (%s%s%s points) is %sOffline%s!", name, colorCyan, points, colorReset, colorRed, colorReset)
 }
@@ -989,7 +989,7 @@ func (m *Miner) handleGameChange(streamer *entities.Streamer, previous, current 
 	if current == "" || previous == "" || strings.EqualFold(previous, current) {
 		return
 	}
-	m.logger.EmojiPrintf(":video_game:", "%s now playing: %s!", displayName(streamer.Username), current)
+	m.logger.EmojiPrintf(":video_game:", "%s now playing: %s!", styledStreamerName(streamer), current)
 }
 
 func displayName(name string) string {
@@ -997,6 +997,17 @@ func displayName(name string) string {
 		return ""
 	}
 	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+func styledStreamerName(streamer *entities.Streamer) string {
+	if streamer == nil {
+		return ""
+	}
+	name := displayName(streamer.Username)
+	if streamer.HasActiveMultipliers() {
+		return fmt.Sprintf("%s%s%s", colorDropsAccent, name, colorReset)
+	}
+	return name
 }
 
 func formatChannelPoints(points int) string {
@@ -1083,7 +1094,7 @@ func (m *Miner) logPointsDelta(streamer *entities.Streamer, delta int, reason st
 	if delta == 0 {
 		return
 	}
-	name := displayName(streamer.Username)
+	name := styledStreamerName(streamer)
 	points := formatChannelPoints(streamer.ChannelPoints)
 	sign := "+"
 	valueColor := colorGreen
@@ -1245,7 +1256,7 @@ func (m *Miner) stopChatWatcher(streamer *entities.Streamer) {
 	m.chatMu.Unlock()
 	if ok && watcher != nil {
 		if m.logger != nil {
-			m.logger.EmojiPrintf(":speech_balloon:", "Leave IRC Chat: %s", streamer.Username)
+			m.logger.EmojiPrintf(":speech_balloon:", "Leave IRC Chat: %s", styledStreamerName(streamer))
 		}
 		watcher.Stop()
 	}
