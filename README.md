@@ -1,3 +1,33 @@
+![Twitch Channel Points Miner](assets/banner.png)
+<p align="center">
+    <a href="https://github.com/0x8fv/Twitch-Channel-Points-Miner/releases">
+        <img
+            alt="Latest Version"
+            src="https://img.shields.io/github/v/release/0x8fv/Twitch-Channel-Points-Miner?style=flat&color=white&logo=github&logoColor=white"
+        />
+    </a>
+    <a
+        href="https://github.com/0x8fv/Twitch-Channel-Points-Miner/stargazers"
+    >
+        <img
+            alt="GitHub Repo stars"
+            src="https://img.shields.io/github/stars/0x8fv/Twitch-Channel-Points-Miner?style=flat&color=limegreen&logo=github&logoColor=white"
+        />
+    </a>
+    <a href="https://github.com/MShawon/github-clone-count-badge">
+        <img
+            alt="GitHub Traffic"
+            src="https://hits.sh/github.com/0x8fv/Twitch-Channel-Points-Miner.svg?style=flat&label=views"
+        />
+    </a>
+    <a href="https://github.com/0x8fv/Twitch-Channel-Points-Miner">
+        <img
+            alt="GitHub last commit"
+            src="https://img.shields.io/github/last-commit/0x8fv/Twitch-Channel-Points-Miner?style=flat&color=lightyellow&logo=github&logoColor=white"
+        />
+    </a>
+</p>
+
 # Twitch Channel Points Miner (Go)
 
 Go rewrite of [0x8fv/Twitch-Channel-Points-Miner-v2](https://github.com/0x8fv/Twitch-Channel-Points-Miner-v2) with a focus on speed and low overhead. This version keeps the same behavior (auto-claims bonuses, drops, and predictions) but trims dependencies, streams point updates over PubSub.
