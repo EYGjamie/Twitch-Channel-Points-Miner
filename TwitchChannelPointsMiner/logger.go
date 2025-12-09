@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -28,6 +29,28 @@ type Logger struct {
 	settings LoggerSettings
 }
 
+type dualWriter struct {
+	console io.Writer
+	file    io.Writer
+}
+
+func (w dualWriter) Write(p []byte) (int, error) {
+	if w.console != nil {
+		if _, err := w.console.Write(p); err != nil {
+			return 0, err
+		}
+	}
+	if w.file != nil {
+		clean := ansiRegexp.ReplaceAll(p, nil)
+		if _, err := w.file.Write(clean); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func NewLogger(settings LoggerSettings, username string) *Logger {
 	var output io.Writer = os.Stdout
 	if settings.Save {
@@ -41,7 +64,10 @@ func NewLogger(settings LoggerSettings, username string) *Logger {
 			logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", name))
 			f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 			if err == nil {
-				output = io.MultiWriter(os.Stdout, f)
+				output = dualWriter{
+					console: os.Stdout,
+					file:    f,
+				}
 			}
 		}
 	}
