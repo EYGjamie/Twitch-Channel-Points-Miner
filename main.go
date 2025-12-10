@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 
 	miner "TwitchChannelPointsMiner/TwitchChannelPointsMiner"
 	"TwitchChannelPointsMiner/TwitchChannelPointsMiner/classes/entities"
+	"TwitchChannelPointsMiner/TwitchChannelPointsMiner/constants"
 	"TwitchChannelPointsMiner/TwitchChannelPointsMiner/utils"
 )
 
@@ -50,6 +53,7 @@ type config struct {
 	GameExclude   []string  `json:"game_exclude"`
 	WatchPriority []string  `json:"watch_priority"`
 	Bet           betConfig `json:"bet"`
+	Timezone      *string   `json:"timezone"`
 }
 
 func clearConsole() {
@@ -94,6 +98,7 @@ func defaultConfig() map[string]interface{} {
 		"show_username_in_console":      false,
 		"show_claimed_bonus_msg":        true,
 		"show_game":                     true,
+		"timezone":                      nil,
 		// "show_drops_indicator":          true,
 		"streamers":     []interface{}{},
 		"game_priority": []interface{}{},
@@ -167,6 +172,21 @@ func loadOrCreateConfig(path string) (config, error) {
 	return cfg, nil
 }
 
+func applyTimezoneOverride(raw *string, logger *miner.Logger) {
+	if raw == nil {
+		return
+	}
+	zone := strings.TrimSpace(*raw)
+	if zone == "" || strings.EqualFold(zone, "auto") {
+		return
+	}
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		logger.Errorf("%sTimezone override ignored; falling back to system time: %v%s", constants.ColorRed, err, constants.ColorReset)
+	}
+	time.Local = loc
+}
+
 func main() {
 	setConsoleTitle("Klaro's Twitch Miner")
 	clearConsole()
@@ -221,6 +241,9 @@ func main() {
 		Less:             false,
 		Debug:            cfg.Debug,
 	}
+
+	logger := miner.NewLogger(loggerSettings, cfg.Username)
+	applyTimezoneOverride(cfg.Timezone, logger)
 
 	minr := miner.NewMiner(
 		cfg.Username,
