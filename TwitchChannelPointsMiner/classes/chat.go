@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -72,7 +73,7 @@ func (c *ChatClient) connectAndListen() error {
 		return fmt.Errorf("missing chat credentials")
 	}
 
-	addr := fmt.Sprintf("%s:%d", constants.IRC, constants.IRCPort)
+	addr := net.JoinHostPort(constants.IRC, strconv.Itoa(constants.IRCPort))
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
 		return err

@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"TwitchChannelPointsMiner/TwitchChannelPointsMiner/classes/entities"
@@ -33,23 +32,17 @@ type debugLogger interface {
 }
 
 type Twitch struct {
-	userAgent       string
-	deviceID        string
-	clientSession   string
-	clientVersion   string
-	integrityToken  string
-	integrityExpiry time.Time
-	integrityMu     sync.Mutex
-	integrityCache  map[string]integrityInfo
-	cookiesPath     string
-	twitchLogin     *TwitchLogin
-	client          *http.Client
-	twilightRegexp  *regexp.Regexp
-	settingsRegex   *regexp.Regexp
-	spadeRegex      *regexp.Regexp
-	logger          debugLogger
-	onGameChange    func(streamer *entities.Streamer, previous, current string)
-	activeDropGames map[string]struct{}
+	userAgent      string
+	deviceID       string
+	clientSession  string
+	clientVersion  string
+	twitchLogin    *TwitchLogin
+	client         *http.Client
+	twilightRegexp *regexp.Regexp
+	settingsRegex  *regexp.Regexp
+	spadeRegex     *regexp.Regexp
+	logger         debugLogger
+	onGameChange   func(streamer *entities.Streamer, previous, current string)
 }
 
 type ClaimedDrop struct {
@@ -57,11 +50,6 @@ type ClaimedDrop struct {
 	CampaignName  string
 	CurrentValue  int
 	RequiredValue int
-}
-
-type integrityInfo struct {
-	Token  string
-	Expiry time.Time
 }
 
 func NewTwitch(username, userAgent, password string, logger debugLogger) (*Twitch, error) {
@@ -78,13 +66,10 @@ func NewTwitch(username, userAgent, password string, logger debugLogger) (*Twitc
 		clientVersion:  constants.ClientVersion,
 		twitchLogin:    login,
 		client:         login.Client(),
-		integrityCache: make(map[string]integrityInfo),
 		twilightRegexp: regexp.MustCompile(`window\.__twilightBuildID\s*=\s*"([0-9a-fA-F\-]{36})"`),
 		settingsRegex:  regexp.MustCompile(`(https://static\.twitchcdn\.net/config/settings.*?\.js|https://assets\.twitch\.tv/config/settings.*?\.js)`),
 		spadeRegex:     regexp.MustCompile(`"spade_url":"(.*?)"`),
 		logger:         logger,
-		// TODO: Fix Available Campaigns
-		// activeDropGames: make(map[string]struct{}),
 	}, nil
 }
 

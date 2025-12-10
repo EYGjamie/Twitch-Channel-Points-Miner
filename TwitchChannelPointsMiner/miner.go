@@ -89,25 +89,6 @@ func parseWatchPriorities(priorityNames []string) []watchPriority {
 	return parsed
 }
 
-func watchPriorityName(p watchPriority) string {
-	switch p {
-	case watchPriorityOrder:
-		return "ORDER"
-	case watchPriorityStreak:
-		return "STREAK"
-	case watchPriorityDrops:
-		return "DROPS"
-	case watchPrioritySubscribed:
-		return "SUBSCRIBED"
-	case watchPriorityPointsAscending:
-		return "POINTS_ASC"
-	case watchPriorityPointsDescending:
-		return "POINTS_DESC"
-	default:
-		return "UNKNOWN"
-	}
-}
-
 func normalizeGameList(values []string) []string {
 	normalized := make([]string, 0, len(values))
 	seen := make(map[string]struct{})
@@ -147,7 +128,6 @@ type Miner struct {
 	showGameInfo               bool
 	logWatchQueue              bool
 	// showDropsIndicator         bool
-	rawWatchPriorities []string
 }
 
 func NewMiner(username, password string, claimDropsStartup bool, disableCertCheck bool, loggerSettings LoggerSettings, streamerSettings entities.StreamerSettings, priorityNames []string, gamePriority []string, gameExclude []string, showGameInfo bool, logWatchQueue bool) *Miner {
@@ -177,7 +157,6 @@ func NewMiner(username, password string, claimDropsStartup bool, disableCertChec
 		showGameInfo:               showGameInfo,
 		logWatchQueue:              logWatchQueue,
 		// showDropsIndicator:         showDropsIndicator,
-		rawWatchPriorities: priorityNames,
 	}
 }
 
@@ -191,23 +170,10 @@ func (m *Miner) MineFollowers(order entities.FollowersOrder) {
 	m.run(nil, true, order)
 }
 
-func (m *Miner) logWatchPriorities() {
-	applied := make([]string, 0, len(m.watchPriorities))
-	for _, p := range m.watchPriorities {
-		applied = append(applied, watchPriorityName(p))
-	}
-	raw := m.rawWatchPriorities
-	if len(raw) == 0 {
-		raw = []string{"<default>"}
-	}
-	// m.logger.Printf("Watch priority (config): %v | Applied order: %s", raw, strings.Join(applied, ", "))
-}
-
 func (m *Miner) run(streamers []string, useFollowers bool, order entities.FollowersOrder) {
 	m.startedAt = time.Now()
 	m.logger.Printf("Twitch Channel Points Miner | v%s", constants.Version)
 	m.logger.Println("https://github.com/0x8fv/Twitch-Channel-Points-Miner")
-	m.logWatchPriorities()
 	sessionID := newSessionID()
 	m.logger.EmojiPrintf(":green_circle:", "Start session: '%s'", sessionID)
 	m.stop = make(chan struct{})
@@ -445,20 +411,11 @@ func (m *Miner) resolveGameName(streamer *entities.Streamer) string {
 }
 
 func (m *Miner) gameSuffix(streamer *entities.Streamer) string {
-	// name, hasDrops := m.gameInfo(streamer)
 	name := m.gameInfo(streamer)
-	switch {
-	// case name != "" && hasDrops:
-	case name != "":
-		// return fmt.Sprintf("%s %s", name, m.dropIndicator())
-		return fmt.Sprintf("%s", name)
-	case name != "":
+	if name != "" {
 		return name
-	// case hasDrops:
-	// 	return m.dropIndicator()
-	default:
-		return ""
 	}
+	return ""
 }
 
 // func (m *Miner) gameInfo(streamer *entities.Streamer) (string, bool) {
@@ -931,7 +888,7 @@ func (m *Miner) shutdown(sessionID string) {
 	for _, s := range m.streamers {
 		initial := m.initialPoints[s.Username]
 		total := s.ChannelPoints - initial
-		if total == 0 && (s.History == nil || len(s.History) == 0) {
+		if total == 0 && len(s.History) == 0 {
 			continue
 		}
 		signColor := colorGreen
