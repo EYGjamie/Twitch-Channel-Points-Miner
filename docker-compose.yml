@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # First Instance - Account 1
+  miner-account1:
+    build: .
+    container_name: twitch-miner-account1
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./cookies/account1:/app/cookies
+      - ./logs/account1:/app/logs
+    environment:
+      - TZ=Europe/Berlin
+      - CONFIG_PATH=/app/config.json
+    networks:
+      - twitch-miner-network
+
+  # Second Instance - Account 2
+  # miner-account2:
+  #   build: .
+  #   container_name: twitch-miner-account2
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./config.json:/app/config.json:ro
+  #     - ./cookies/account2:/app/cookies
+  #     - ./logs/account2:/app/logs
+  #   environment:
+  #     - TZ=Europe/Berlin
+  #     - CONFIG_PATH=/app/config.json
+  #   networks:
+  #     - twitch-miner-network
+
+  # Third Instance - Account 3 (optional, commented out)
+  # miner-account3:
+  #   build: .
+  #   container_name: twitch-miner-account3
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./config.json:/app/config.json:ro
+  #     - ./cookies/account3:/app/cookies
+  #     - ./logs/account3:/app/logs
+  #   environment:
+  #     - TZ=Europe/Berlin
+  #     - CONFIG_PATH=/app/config.json
+  #   networks:
+  #     - twitch-miner-network
+
+networks:
+  twitch-miner-network:
+    driver: bridge
