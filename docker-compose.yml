@@ -7,44 +7,74 @@ services:
     container_name: twitch-miner-account1
     restart: unless-stopped
     volumes:
-      - ./config.json:/app/config.json:ro
+      - ./configs/account1/config.json:/app/config.json:ro
       - ./cookies/account1:/app/cookies
       - ./logs/account1:/app/logs
     environment:
       - TZ=Europe/Berlin
-      - CONFIG_PATH=/app/config.json
+      - TCPM_CONFIG=/app/config.json
     networks:
       - twitch-miner-network
 
   # Second Instance - Account 2
-  # miner-account2:
-  #   build: .
-  #   container_name: twitch-miner-account2
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./config.json:/app/config.json:ro
-  #     - ./cookies/account2:/app/cookies
-  #     - ./logs/account2:/app/logs
-  #   environment:
-  #     - TZ=Europe/Berlin
-  #     - CONFIG_PATH=/app/config.json
-  #   networks:
-  #     - twitch-miner-network
+  miner-account2:
+    build: .
+    container_name: twitch-miner-account2
+    restart: unless-stopped
+    volumes:
+      - ./configs/account2/config.json:/app/config.json:ro
+      - ./cookies/account2:/app/cookies
+      - ./logs/account2:/app/logs
+    environment:
+      - TZ=Europe/Berlin
+      - TCPM_CONFIG=/app/config.json
+    networks:
+      - twitch-miner-network
 
-  # Third Instance - Account 3 (optional, commented out)
-  # miner-account3:
-  #   build: .
-  #   container_name: twitch-miner-account3
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./config.json:/app/config.json:ro
-  #     - ./cookies/account3:/app/cookies
-  #     - ./logs/account3:/app/logs
-  #   environment:
-  #     - TZ=Europe/Berlin
-  #     - CONFIG_PATH=/app/config.json
-  #   networks:
-  #     - twitch-miner-network
+  # Third Instance - Account 3
+  miner-account3:
+    build: .
+    container_name: twitch-miner-account3
+    restart: unless-stopped
+    volumes:
+      - ./configs/account3/config.json:/app/config.json:ro
+      - ./cookies/account3:/app/cookies
+      - ./logs/account3:/app/logs
+    environment:
+      - TZ=Europe/Berlin
+      - TCPM_CONFIG=/app/config.json
+    networks:
+      - twitch-miner-network
+
+  # Fourth Instance - Account 4
+  miner-account4:
+    build: .
+    container_name: twitch-miner-account4
+    restart: unless-stopped
+    volumes:
+      - ./configs/account4/config.json:/app/config.json:ro
+      - ./cookies/account4:/app/cookies
+      - ./logs/account4:/app/logs
+    environment:
+      - TZ=Europe/Berlin
+      - TCPM_CONFIG=/app/config.json
+    networks:
+      - twitch-miner-network
+
+  # Fifth Instance - Account 5
+  miner-account5:
+    build: .
+    container_name: twitch-miner-account5
+    restart: unless-stopped
+    volumes:
+      - ./configs/account5/config.json:/app/config.json:ro
+      - ./cookies/account5:/app/cookies
+      - ./logs/account5:/app/logs
+    environment:
+      - TZ=Europe/Berlin
+      - TCPM_CONFIG=/app/config.json
+    networks:
+      - twitch-miner-network
 
 networks:
   twitch-miner-network:
