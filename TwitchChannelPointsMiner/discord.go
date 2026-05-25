@@ -66,9 +66,11 @@ func (d *DiscordWebhook) Send(message string, event constants.Event) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
+	go func() {
+		resp, err := d.client.Do(req)
+		if err != nil {
+			return
+		}
+		_ = resp.Body.Close()
+	}()
 }

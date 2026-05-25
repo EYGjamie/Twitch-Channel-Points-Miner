@@ -491,6 +491,7 @@ func applyTimezoneOverride(raw *string, logger *miner.Logger) {
 	loc, err := time.LoadLocation(zone)
 	if err != nil {
 		logger.Errorf("%sTimezone override ignored; falling back to system time: %v%s", constants.ColorRed, err, constants.ColorReset)
+		return
 	}
 	time.Local = loc
 }

@@ -300,12 +300,18 @@ func (t *Twitch) GetFollowers(limit int, order entities.FollowersOrder) ([]strin
 		if followsResp == nil {
 			break
 		}
-		data := followsResp.(map[string]interface{})
+		data, ok := followsResp.(map[string]interface{})
+		if !ok {
+			break
+		}
 		edges, _ := data["edges"].([]interface{})
 		pageInfo, _ := data["pageInfo"].(map[string]interface{})
 		cursor = ""
 		for _, edge := range edges {
-			e := edge.(map[string]interface{})
+			e, ok := edge.(map[string]interface{})
+			if !ok {
+				continue
+			}
 			node, _ := e["node"].(map[string]interface{})
 			login, _ := node["login"].(string)
 			follows = append(follows, strings.ToLower(login))
@@ -1020,10 +1026,17 @@ func (t *Twitch) CampaignIDsForStreamer(streamer *entities.Streamer) ([]string, 
 	if cams == nil {
 		return []string{}, nil
 	}
-	arr := cams.([]interface{})
+	arr, ok := cams.([]interface{})
+	if !ok {
+		return []string{}, nil
+	}
 	var res []string
 	for _, c := range arr {
-		if id, ok := c.(map[string]interface{})["id"].(string); ok {
+		m, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if id, ok := m["id"].(string); ok {
 			res = append(res, id)
 		}
 	}
@@ -1055,7 +1068,8 @@ func (t *Twitch) inventory() map[string]interface{} {
 	if inv == nil {
 		return nil
 	}
-	return inv.(map[string]interface{})
+	m, _ := inv.(map[string]interface{})
+	return m
 }
 
 func operationLabel(payload interface{}, includeNote bool) string {

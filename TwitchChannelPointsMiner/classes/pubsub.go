@@ -876,6 +876,9 @@ func (p *PubSubClient) checkPendingClaims() {
 }
 
 func chunkTopics(topics []string, chunkSize int) [][]string {
+	if len(topics) == 0 {
+		return nil
+	}
 	if chunkSize <= 0 {
 		return [][]string{topics}
 	}

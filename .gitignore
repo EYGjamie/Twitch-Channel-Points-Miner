@@ -2,3 +2,5 @@ log
 cookies
 config.json
 dist/
+
+.claude/
